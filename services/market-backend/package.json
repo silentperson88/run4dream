@@ -1,0 +1,38 @@
+﻿{
+  "name": "market-backend-pg",
+  "version": "1.0.0",
+  "description": "Market backend microservice with PostgreSQL persistence",
+  "main": "server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "worker:fundamentals": "node src/workers/fundamentals.worker.js",
+    "migrate": "node src/db/migrate.js",
+    "seed:rawstocks": "node src/scripts/rawstocks.script.js",
+    "seed:rawstocks:local": "node src/scripts/rawstocks.fromRawData.script.js",
+    "sync:eq:auto-activate": "node src/scripts/auto-activate-eq.script.js",
+    "sync:eod:missing-history": "node src/scripts/fetch-missing-eod-history.script.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.13.1",
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "express-validator": "^7.3.1",
+    "ioredis": "^5.9.1",
+    "node-cron": "^4.2.1",
+    "pg": "^8.13.1",
+    "playwright": "^1.49.0",
+    "smartapi-javascript": "^1.0.27",
+    "uuid": "^11.0.5",
+    "winston": "^3.18.3",
+    "ws": "^8.19.0",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}

@@ -1,0 +1,26 @@
+﻿CREATE TABLE IF NOT EXISTS active_stock (
+  id BIGSERIAL PRIMARY KEY,
+  master_id BIGINT,
+  token VARCHAR(64) NOT NULL UNIQUE,
+  symbol VARCHAR(64) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  exchange VARCHAR(16) NOT NULL,
+  instrumenttype VARCHAR(32) NOT NULL DEFAULT 'EQ',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ltp NUMERIC(18,6) NOT NULL DEFAULT 0,
+  open NUMERIC(18,6) NOT NULL DEFAULT 0,
+  high NUMERIC(18,6) NOT NULL DEFAULT 0,
+  low NUMERIC(18,6) NOT NULL DEFAULT 0,
+  close NUMERIC(18,6) NOT NULL DEFAULT 0,
+  percent_change NUMERIC(10,4) NOT NULL DEFAULT 0,
+  avg_price NUMERIC(18,6) NOT NULL DEFAULT 0,
+  lower_circuit NUMERIC(18,6) NOT NULL DEFAULT 0,
+  upper_circuit NUMERIC(18,6) NOT NULL DEFAULT 0,
+  week52_low NUMERIC(18,6) NOT NULL DEFAULT 0,
+  week52_high NUMERIC(18,6) NOT NULL DEFAULT 0,
+  last_update TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_active_stock_symbol ON active_stock(symbol);
+CREATE INDEX IF NOT EXISTS idx_user_active_stock_is_active ON active_stock(is_active);

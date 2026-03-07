@@ -1,0 +1,54 @@
+﻿version: "3.9"
+services:
+  postgres:
+    image: postgres:16
+    container_name: pt_postgres
+    environment:
+      POSTGRES_DB: papertrading
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: pt_redis
+    ports:
+      - "6379:6379"
+
+  market-backend:
+    build: ./services/market-backend
+    container_name: pt_market_backend
+    env_file:
+      - ./services/market-backend/.env
+    ports:
+      - "8002:8002"
+    depends_on:
+      - postgres
+      - redis
+
+  user-backend:
+    build: ./services/user-backend
+    container_name: pt_user_backend
+    env_file:
+      - ./services/user-backend/.env
+    ports:
+      - "8001:8001"
+    depends_on:
+      - postgres
+
+  gateway:
+    build: ./gateway
+    container_name: pt_gateway
+    env_file:
+      - ./gateway/.env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - market-backend
+      - user-backend
+
+volumes:
+  pg_data:
