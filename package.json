@@ -3,11 +3,15 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
+    "dev:all": "node scripts/run-services.mjs dev",
+    "dev:mixed": "node scripts/run-services.mjs mixed",
     "dev:market": "npm --prefix services/market-backend run dev",
     "dev:user": "npm --prefix services/user-backend run dev",
+    "dev:content": "npm --prefix services/content-backend run dev",
     "dev:gateway": "npm --prefix gateway run dev",
     "start:market": "npm --prefix services/market-backend run start",
     "start:user": "npm --prefix services/user-backend run start",
+    "start:content": "npm --prefix services/content-backend run start",
     "start:gateway": "npm --prefix gateway run start",
     "migrate:market": "npm --prefix services/market-backend run migrate",
     "migrate:user": "npm --prefix services/user-backend run migrate"

@@ -22,5 +22,14 @@ app.use(
   }),
 );
 
+app.use(
+  "/api/v1/content",
+  createProxyMiddleware({
+    target: process.env.CONTENT_BACKEND_URL || "http://localhost:8003",
+    changeOrigin: true,
+    pathRewrite: { "^/api/v1/content": "" },
+  }),
+);
+
 const port = Number(process.env.PORT || 8000);
 app.listen(port, () => console.log(`Gateway listening on ${port}`));

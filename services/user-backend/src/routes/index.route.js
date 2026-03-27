@@ -8,6 +8,8 @@ const BaseRoutes = (app) => {
   app.use(`${baseRoute}/dashboard`, require("./dashboard.routes"));
   app.use(`${baseRoute}/order`, require("./order.route"));
   app.use(`${baseRoute}/tts`, require("./tts.routes"));
+  app.use(`${baseRoute}/ollama`, require("./ollama.routes"));
+  app.use(`${baseRoute}/content`, require("./contentCreator.routes"));
 };
 
 module.exports = { BaseRoutes };

@@ -2,3 +2,4 @@
   - gateway
   - services/market-backend
   - services/user-backend
+  - services/content-backend

@@ -39,6 +39,14 @@ services:
     depends_on:
       - postgres
 
+  content-backend:
+    build: ./services/content-backend
+    container_name: pt_content_backend
+    env_file:
+      - ./services/content-backend/.env
+    ports:
+      - "8003:8003"
+
   gateway:
     build: ./gateway
     container_name: pt_gateway
@@ -49,6 +57,7 @@ services:
     depends_on:
       - market-backend
       - user-backend
+      - content-backend
 
 volumes:
   pg_data:
