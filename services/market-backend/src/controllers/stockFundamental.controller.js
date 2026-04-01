@@ -11,7 +11,7 @@ const { PYTHON_ENDPOINTS } = require("../pythonApi/endpoints.py");
 const redis = require("../config/redis.config");
 const { REDIS_KEYS } = require("../utils/Constants/redisKey.consants");
 const { enqueueFundamentalsJobs } = require("../schedulers/fundamentals.scheduler");
-const { analyzeScreenerHtmlRendered } = require("../services/screenerHtmlRendered.service");
+const { scrapeWithFallback } = require("../services/fundamentalsScrape.service");
 const { buildMappedFundamentals } = require("../services/fundamentalsMapper.service");
 
 const normalizeTextArray = (value) => {
@@ -191,8 +191,17 @@ exports.fetchStockFundamentals = async (req, res) => {
 
     const masterStock = await stockMasterService.getMasterStockById(master_id);
     if (!masterStock) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
+    if (!masterStock.is_active) {
+      return response(res, 400, responseUtils.STOCK_INACTIVE);
+    }
+    if (String(masterStock.screener_status || "PENDING").toUpperCase() !== "PENDING") {
+      return response(res, 400, responseUtils.SCREENER_STATUS_NOT_PENDING);
+    }
 
     if (!masterStock.screener_url) {
+      await stockMasterService.updateMasterStock(masterStock.id, {
+        screener_status: "FAILED",
+      }).catch(() => {});
       return response(res, 400, responseUtils.SCREENER_URL_NOT_EXIST);
     }
 
@@ -202,6 +211,9 @@ exports.fetchStockFundamentals = async (req, res) => {
     );
 
     if (result.status !== 200) {
+      await stockMasterService.updateMasterStock(masterStock.id, {
+        screener_status: "FAILED",
+      }).catch(() => {});
       return response(
         res,
         400,
@@ -241,11 +253,22 @@ exports.fetchStockFundamentals = async (req, res) => {
 
     const data = await stockFundamentalsService.updateEntry(fundamentals);
     if (!data) {
+      await stockMasterService.updateMasterStock(masterStock.id, {
+        screener_status: "FAILED",
+      }).catch(() => {});
       return response(res, 400, responseUtils.FAILED_TO_FETCH_STOCK_FUNDAMENTALS);
     }
 
+    await stockMasterService.updateMasterStock(masterStock.id, {
+      screener_status: "VALID",
+    }).catch(() => {});
     return response(res, 200, responseUtils.SUCCESS, { data, stockDetails });
   } catch (error) {
+    if (req.body?.master_id) {
+      await stockMasterService.updateMasterStock(req.body.master_id, {
+        screener_status: "FAILED",
+      }).catch(() => {});
+    }
     return response(
       res,
       400,
@@ -285,7 +308,16 @@ exports.enqueueFundamentalsJob = async (req, res) => {
       : await stockMasterService.getMasterStockByName(name);
 
     if (!masterStock) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
+    if (!masterStock.is_active) {
+      return response(res, 400, responseUtils.STOCK_INACTIVE);
+    }
+    if (String(masterStock.screener_status || "PENDING").toUpperCase() !== "PENDING") {
+      return response(res, 400, responseUtils.SCREENER_STATUS_NOT_PENDING);
+    }
     if (!masterStock.screener_url) {
+      await stockMasterService.updateMasterStock(masterStock.id, {
+        screener_status: "FAILED",
+      }).catch(() => {});
       return response(res, 400, responseUtils.SCREENER_URL_NOT_EXIST);
     }
 
@@ -355,17 +387,43 @@ exports.previewFundamentalsByName = async (req, res) => {
 
     const masterStock = await stockMasterService.getMasterStockByName(name);
     if (!masterStock) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
+    if (!masterStock.is_active) {
+      return response(res, 400, responseUtils.STOCK_INACTIVE);
+    }
+    if (String(masterStock.screener_status || "PENDING").toUpperCase() !== "PENDING") {
+      return response(res, 400, responseUtils.SCREENER_STATUS_NOT_PENDING);
+    }
     if (!masterStock.screener_url) {
+      await stockMasterService.updateMasterStock(masterStock.id, {
+        screener_status: "FAILED",
+      }).catch(() => {});
       return response(res, 400, responseUtils.SCREENER_URL_NOT_EXIST);
     }
 
-    const data = await analyzeScreenerHtmlRendered(masterStock.screener_url);
+    const result = await scrapeWithFallback(masterStock.screener_url);
+    const data = result.data;
     await writeFundamentalsTableRowCatalog(masterStock, data);
     await upsertMappedFundamentals(masterStock, data);
+    if (result.fallbackUsed && result.selectedUrl && result.selectedUrl !== masterStock.screener_url) {
+      await stockMasterService.updateMasterStock(masterStock.id, {
+        screener_url: result.selectedUrl,
+      });
+    }
     await stockMasterService.setFetchCount(masterStock.id, 1);
+    await stockMasterService.updateMasterStock(masterStock.id, {
+      screener_status: "VALID",
+    }).catch(() => {});
 
     return response(res, 200, responseUtils.SUCCESS, { data });
   } catch (error) {
+    if (req.body?.name) {
+      const masterStock = await stockMasterService.getMasterStockByName(req.body.name).catch(() => null);
+      if (masterStock?.id) {
+        await stockMasterService.updateMasterStock(masterStock.id, {
+          screener_status: "FAILED",
+        }).catch(() => {});
+      }
+    }
     return response(
       res,
       500,

@@ -27,6 +27,8 @@ module.exports.responseUtils = {
   MASTER_CRATED_SUCCESSFULLY: "Master stock created successfully",
   MASTER_FETCHED_SUCCESSFULLY: "Master list fetched successfully",
   SCREENER_URL_NOT_EXIST: "Screener url not exist",
+  SCREENER_STATUS_NOT_PENDING: "Screener status is not pending",
+  STOCK_INACTIVE: "Stock is inactive",
   MASTER_ID_REQUIRED: "Master stock id is required",
 
   //   Stock Fundamental

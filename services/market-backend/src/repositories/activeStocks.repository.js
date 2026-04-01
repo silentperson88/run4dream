@@ -150,12 +150,12 @@ const updateByToken = async (token, data = {}, db = pool) => {
     upperCircuit: "upper_circuit",
     week52Low: "week52_low",
     week52High: "week52_high",
-    updatedAt: "last_update",
   };
 
   const sets = [];
   const values = [token];
   Object.entries(data).forEach(([key, value]) => {
+    if (key === "updatedAt" || key === "last_update") return;
     const col = map[key] || key;
     values.push(value);
     sets.push(`${col} = $${values.length}`);

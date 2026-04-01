@@ -16,17 +16,8 @@ const DEFAULT_BATCH = parseInt(
 );
 
 async function enqueueFundamentalsJobs() {
-  const refreshBefore = new Date(
-    Date.now() - DEFAULT_REFRESH_DAYS * 24 * 60 * 60 * 1000,
-  );
-
-  const fundamentals = await stockFundamentalsService.listMasterFreshness();
-  const fundamentalsByMaster = new Map(
-    fundamentals.map((f) => [String(f.master_id), f.last_updated_at]),
-  );
-
   const masters = await stockMasterService.getAllMasterStocks();
-  const candidateMasters = masters.filter((m) => m.screener_url);
+  const candidateMasters = masters.filter((m) => stockMasterService.canFetchScreener(m));
 
   const activeStocks = await activeStockService.getActiveStocksByMasterIds(
     candidateMasters.map((m) => m.id),
@@ -39,12 +30,6 @@ async function enqueueFundamentalsJobs() {
   let queued = 0;
   for (const m of candidateMasters) {
     if (queued >= DEFAULT_BATCH) break;
-
-    const lastUpdated = fundamentalsByMaster.get(String(m.id));
-    const neverFetched = !m.fetch_count || m.fetch_count <= 0;
-    const missing = !lastUpdated;
-    const stale = lastUpdated && new Date(lastUpdated) < refreshBefore;
-    if (!neverFetched && !missing && !stale) continue;
 
     const active_stock_id = activeByMaster.get(String(m.id)) || null;
 

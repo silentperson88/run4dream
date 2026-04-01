@@ -4,10 +4,14 @@ require("../config/db");
 const stockFundamentalsService = require("../services/stockFundamental.service");
 const activeStockService = require("../services/activestock.service");
 const stockMasterService = require("../services/stockMaster.service");
+const { launchChromium } = require("../utils/browserLauncher");
 const { scrapeWithFallback } = require("../services/fundamentalsScrape.service");
 const { buildMappedFundamentals } = require("../services/fundamentalsMapper.service");
 
-const JOB_DELAY_MS = Number(process.env.FUNDAMENTALS_JOB_DELAY_MS || 5000);
+const FAST_CONCURRENCY = Math.max(
+  1,
+  Number(process.env.FUNDAMENTALS_PARALLELISM || 2),
+);
 const IDLE_DELAY_MS = Number(process.env.FUNDAMENTALS_IDLE_DELAY_MS || 10000);
 const REFRESH_DAYS = Number(process.env.FUNDAMENTALS_REFRESH_DAYS || 30);
 const CANDIDATE_LIMIT = Number(process.env.FUNDAMENTALS_QUEUE_BATCH || 200);
@@ -32,10 +36,15 @@ const runtime = {
   masterId: readArg("master-id", "stock-id", "id"),
   token: readArg("token"),
   symbol: readArg("symbol"),
+  mode: (readArg("mode") || "pending").toLowerCase(),
   once: hasFlag("once", "single", "test"),
+  concurrency: Math.max(1, Number(readArg("concurrency") || FAST_CONCURRENCY)),
+  waitUntil: (readArg("wait-until") || "domcontentloaded").toLowerCase(),
 };
 
-runtime.singleMode = Boolean(runtime.masterId || runtime.token || runtime.symbol || runtime.once);
+runtime.singleMode = Boolean(
+  runtime.masterId || runtime.token || runtime.symbol || runtime.once,
+);
 
 const getActiveStockId = async (masterId) => {
   if (!masterId) return null;
@@ -47,14 +56,15 @@ const hasUsableFundamentals = (data) => {
   if (!data || typeof data !== "object") return false;
   if (data?.company_info?.company_name) return true;
 
+  const mapped = buildMappedFundamentals(data);
   const sections = [
-    data?.peers?.main_table?.rows,
-    data?.quarters?.main_table?.rows,
-    data?.profit_loss?.main_table?.rows,
-    data?.balance_sheet?.main_table?.rows,
-    data?.cash_flow?.main_table?.rows,
-    data?.ratios?.main_table?.rows,
-    data?.shareholdings?.main_table?.rows,
+    mapped?.peers?.main_table?.rows,
+    mapped?.tables?.quarters?.rows,
+    mapped?.tables?.profit_loss?.rows,
+    mapped?.tables?.balance_sheet?.rows,
+    mapped?.tables?.cash_flow?.rows,
+    mapped?.tables?.ratios?.rows,
+    mapped?.tables?.shareholdings?.rows,
   ];
   return sections.some((rows) => Array.isArray(rows) && rows.length > 0);
 };
@@ -112,7 +122,7 @@ const updateMasterFundamentalsStatus = async (masterId, payload = {}) => {
   }
 };
 
-const fetchCandidatesFromDb = async (limit = CANDIDATE_LIMIT) => {
+const fetchCandidatesFromDb = async (_mode = "pending", limit = CANDIDATE_LIMIT) => {
   const masters = await stockMasterService.getAllMasterStocks();
   const candidates = masters.filter((m) => stockMasterService.canFetchScreener(m));
 
@@ -181,12 +191,11 @@ const fetchSingleCandidate = async () => {
       name: master.name || null,
       symbol: master.symbol || null,
       screener_url: master.screener_url || null,
-      force: true,
     },
   ];
 };
 
-const processCandidate = async (payload, position, total) => {
+const processCandidate = async (payload, browser, position, total, stats) => {
   const masterId = Number(payload.master_id);
   const master =
     Number.isFinite(masterId) && masterId > 0
@@ -201,19 +210,28 @@ const processCandidate = async (payload, position, total) => {
   const screenerUrl = master?.screener_url || payload?.screener_url || "";
 
   console.log(
-    `[fundamentals] In progress ${position}/${total}: ${label} | run=${runtime.singleMode ? "single" : "batch"}`,
+    `[fundamentals-fast] In progress ${position}/${total}: ${label} | mode=${runtime.mode} | browser=${browser?._guid ? "pooled" : "shared"}`,
   );
 
   try {
-    const result = await scrapeWithFallback(screenerUrl);
-    await upsertFundamentals(payload, result.data);
+    const result = await scrapeWithFallback(screenerUrl, {
+      browser,
+      waitUntil: runtime.waitUntil,
+    });
+
+    const data = result.data;
+    if (!hasUsableFundamentals(data)) {
+      throw new Error("Empty/invalid fundamentals extracted from screener");
+    }
+
+    await upsertFundamentals(payload, data);
 
     if (masterId && result.fallbackUsed && result.selectedUrl && result.selectedUrl !== screenerUrl) {
       await stockMasterService.updateMasterStock(masterId, {
         screener_url: result.selectedUrl,
       });
       console.log(
-        `[fundamentals] Updated screener_url for ${label} => ${result.selectedUrl}`,
+        `[fundamentals-fast] Updated screener_url for ${label} => ${result.selectedUrl}`,
       );
     }
 
@@ -225,7 +243,8 @@ const processCandidate = async (payload, position, total) => {
       screener_status: "VALID",
     });
 
-    return { ok: true, label, result };
+    if (stats) stats.done += 1;
+    return { ok: true, label };
   } catch (err) {
     const failedFields = Array.isArray(err?.failedFields) ? err.failedFields : null;
     await updateMasterFundamentalsStatus(masterId, {
@@ -235,63 +254,94 @@ const processCandidate = async (payload, position, total) => {
       fundamentals_failed_reason: err?.message || String(err),
       screener_status: "FAILED",
     });
-    throw err;
+    if (stats) stats.failed += 1;
+    console.error(
+      `[fundamentals-fast] Failed ${position}/${total}: ${label} | done=${stats?.done || 0}, failed=${stats?.failed || 0} | error=${
+        err?.message || err
+      }`,
+    );
+    return { ok: false, label, error: err };
   }
 };
 
+const createBrowserPool = async (size) => {
+  const browsers = [];
+  for (let i = 0; i < size; i += 1) {
+    browsers.push(await launchChromium());
+  }
+  return browsers;
+};
+
+const runBatchOnce = async () => {
+  const stats = { done: 0, failed: 0 };
+  const candidates = runtime.singleMode
+    ? await fetchSingleCandidate()
+    : await fetchCandidatesFromDb(runtime.mode, CANDIDATE_LIMIT);
+
+  if (!candidates.length) {
+    if (runtime.singleMode) {
+      console.log("[fundamentals-fast] No matching stock found for single-run mode");
+      return false;
+    }
+    return false;
+  }
+
+  const browsers = await createBrowserPool(
+    Math.min(runtime.concurrency, Math.max(1, candidates.length)),
+  );
+
+  console.log(
+    `[fundamentals-fast] Candidates=${candidates.length}, browsers=${browsers.length}, mode=${runtime.mode}`,
+  );
+
+  let nextIndex = 0;
+  const workers = browsers.map(async (browser) => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= candidates.length) break;
+      const payload = candidates[currentIndex];
+      await processCandidate(
+        payload,
+        browser,
+        currentIndex + 1,
+        candidates.length,
+        stats,
+      );
+    }
+  });
+
+  try {
+    await Promise.all(workers);
+  } finally {
+    await Promise.all(
+      browsers.map((browser) => browser.close().catch(() => {})),
+    );
+  }
+
+  console.log(
+    `[fundamentals-fast] Batch complete | done=${stats.done}, failed=${stats.failed}`,
+  );
+  return true;
+};
+
 const runWorker = async () => {
-  console.log("Fundamentals worker started (DB candidate mode)");
-  let doneCount = 0;
-  let failedCount = 0;
-  let totalStarted = 0;
+  console.log("Fundamentals fast worker started (parallel browser mode)");
 
   while (true) {
-    const candidates = runtime.singleMode
-      ? await fetchSingleCandidate()
-      : await fetchCandidatesFromDb();
-    if (!candidates.length) {
-      if (runtime.singleMode) {
-        console.log("[fundamentals] No matching stock found for single-run mode");
-        return;
-      }
-      await sleep(IDLE_DELAY_MS);
-      continue;
-    }
-
-    const runTotal = candidates.length;
-    console.log(`[fundamentals] DB candidates fetched: total=${runTotal}`);
-
-    for (let i = 0; i < candidates.length; i += 1) {
-      const payload = candidates[i];
-      totalStarted += 1;
-
-      try {
-        const { label } = await processCandidate(payload, i + 1, runTotal);
-        doneCount += 1;
-        console.log(
-          `[fundamentals] Done ${i + 1}/${runTotal}: ${label} | done=${doneCount}, failed=${failedCount}`,
-        );
-      } catch (err) {
-        failedCount += 1;
-        console.error(
-          `[fundamentals] Failed ${i + 1}/${runTotal}: ${payload?.name || payload?.symbol || payload?.master_id || "unknown"} | done=${doneCount}, failed=${failedCount} | error=${
-            err?.message || err
-          }`,
-        );
-      }
-
-      if (JOB_DELAY_MS > 0 && i < candidates.length - 1) {
-        await sleep(JOB_DELAY_MS);
-      }
-    }
-
+    const didWork = await runBatchOnce();
     if (runtime.singleMode) {
       return;
+    }
+
+    if (!didWork) {
+      await sleep(IDLE_DELAY_MS);
+      continue;
     }
   }
 };
 
 runWorker().catch((err) => {
-  console.error("Fundamentals worker crashed", err);
+  console.error("Fundamentals fast worker crashed", err);
   process.exit(1);
 });

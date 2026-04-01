@@ -10,6 +10,7 @@ const BaseRoutes = (app) => {
   app.use(`${baseRoute}/tts`, require("./tts.routes"));
   app.use(`${baseRoute}/ollama`, require("./ollama.routes"));
   app.use(`${baseRoute}/content`, require("./contentCreator.routes"));
+  app.use(`${baseRoute}/tax-planner`, require("./taxPlanner.routes"));
 };
 
 module.exports = { BaseRoutes };

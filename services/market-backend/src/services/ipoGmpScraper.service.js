@@ -1,6 +1,6 @@
 const axios = require("axios");
 const cheerio = require("cheerio");
-const { chromium } = require("playwright");
+const { launchChromium } = require("../utils/browserLauncher");
 
 const LIVE_IPO_GMP_URL = "https://www.investorgain.com/report/live-ipo-gmp/331/";
 
@@ -224,7 +224,7 @@ const fetchHtmlViaAxios = async (url) => {
 };
 
 const fetchHtmlViaPlaywright = async (url) => {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchChromium();
   try {
     const page = await browser.newPage({
       userAgent:

@@ -7,6 +7,12 @@ exports.getRawStockById = async (id) => {
   return stock;
 };
 
+exports.createRawStock = async (data, db) => {
+  const stock = await rawstocksRepo.create(data, db);
+  if (!stock) throw new Error("Failed to create raw stock");
+  return stock;
+};
+
 exports.updateRawStock = async (id, data, db) => {
   const stock = await rawstocksRepo.updateById(id, data, db);
   if (!stock) throw new Error(responseUtils.RAW_STOCK_NOT_FOUND);

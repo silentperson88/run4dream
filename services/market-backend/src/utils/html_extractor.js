@@ -1,5 +1,5 @@
 const cheerio = require("cheerio");
-const { chromium } = require("playwright");
+const { launchChromium } = require("./browserLauncher");
 
 const DEFAULT_WAIT_FOR = "#peers";
 
@@ -8,15 +8,17 @@ const normalizeText = (text) => (text || "").replace(/\s+/g, " ").trim();
 const fetchHtmlRendered = async (url, options = {}) => {
   const waitFor = options.waitFor || DEFAULT_WAIT_FOR;
   const expandButtons = options.expandButtons !== false;
+  const waitUntil = options.waitUntil || "networkidle";
+  const externalBrowser = options.browser || null;
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = externalBrowser || (await launchChromium());
   const page = await browser.newPage();
   page.on("pageerror", (err) => {
     const message = err?.message || String(err);
     if (message.includes("onError is not a function")) return;
     console.warn("Page error:", message);
   });
-  await page.goto(url, { waitUntil: "networkidle" });
+  await page.goto(url, { waitUntil });
 
   if (waitFor) {
     try {
@@ -42,7 +44,10 @@ const fetchHtmlRendered = async (url, options = {}) => {
   }
 
   const html = await page.content();
-  await browser.close();
+  await page.close().catch(() => {});
+  if (!externalBrowser) {
+    await browser.close();
+  }
   return html;
 };
 
@@ -355,8 +360,8 @@ const extractSectionHtml = ($, selector) => {
   return node.length ? node : null;
 };
 
-const analyzeScreenerHtmlRendered = async (url) => {
-  const html = await fetchHtmlRendered(url);
+const analyzeScreenerHtmlRendered = async (url, options = {}) => {
+  const html = await fetchHtmlRendered(url, options);
   let $;
   try {
     $ = cheerio.load(html);

@@ -52,6 +52,15 @@ exports.getMasterStockByName = async (name) => stockMasterRepo.getByName(name);
 
 exports.getAllMasterStocks = async () => stockMasterRepo.listActive();
 
+exports.canFetchScreener = (stock) => {
+  if (!stock) return false;
+  return (
+    stock.is_active === true &&
+    Boolean(String(stock.screener_url || "").trim()) &&
+    String(stock.screener_status || "PENDING").toUpperCase() === "PENDING"
+  );
+};
+
 exports.syncCompanyFromFundamental = async () => stockMasterRepo.syncCompanyFromFundamentals();
 
 exports.setFetchCount = async (id, count = 1, db) =>

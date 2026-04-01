@@ -44,6 +44,7 @@ exports.createrMasterStock = async (req, res) => {
         lotsize: rawStock.lotsize,
         tick_size: rawStock.tick_size,
         raw_stock_id: rawStock.id,
+        screener_status: "PENDING",
         screener_url:
           screenerUrl ||
           `https://www.screener.in/company/${rawStock.name}/consolidated/`,

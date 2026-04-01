@@ -4,6 +4,7 @@ const { toNumber } = require("./common");
 const normalizeMaster = (row = {}) => ({
   ...row,
   fetch_count: toNumber(row.fetch_count),
+  screener_status: row.screener_status || "PENDING",
 });
 
 const create = async (payload, db = pool) => {
@@ -11,9 +12,9 @@ const create = async (payload, db = pool) => {
     `
       INSERT INTO stock_master (
         company, symbol, exchange, name, sector, industry, screener_url,
-        fetch_count, is_active, token, raw_stock_id
+        screener_status, fetch_count, is_active, token, raw_stock_id
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       RETURNING *
     `,
     [
@@ -24,6 +25,7 @@ const create = async (payload, db = pool) => {
       payload.sector ?? null,
       payload.industry ?? null,
       payload.screener_url ?? "",
+      payload.screener_status ?? "PENDING",
       toNumber(payload.fetch_count, 0),
       payload.is_active ?? true,
       payload.token,

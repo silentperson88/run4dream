@@ -56,6 +56,23 @@ const getRawStockPrice = async (req, res) => {
   }
 };
 
+const createRawStock = async (req, res) => {
+  try {
+    const rawStock = await rawstockService.createRawStock(req.body);
+
+    return res.status(201).json({
+      success: true,
+      message: "Raw stock created successfully",
+      data: rawStock,
+    });
+  } catch (err) {
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
 const updateRawStockStatus = async (req, res) => {
   try {
     const { rawStockId, status } = req.body;
@@ -96,4 +113,4 @@ const updateRawStockStatus = async (req, res) => {
   }
 };
 
-module.exports = { getAllRawStocks, getRawStockPrice, updateRawStockStatus };
+module.exports = { getAllRawStocks, getRawStockPrice, createRawStock, updateRawStockStatus };
