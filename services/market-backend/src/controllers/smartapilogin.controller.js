@@ -50,6 +50,7 @@ exports.loginWithTOTP = async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("Login error:", error);
     return res.status(401).json({
       success: false,
       message: error.message || "Login failed",

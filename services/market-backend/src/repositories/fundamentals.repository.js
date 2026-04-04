@@ -1,5 +1,5 @@
 ﻿const { pool } = require("../config/db");
-const { ensureObject } = require("./common");
+const { ensureObject, syncSerialSequence } = require("./common");
 
 const SECTION_COLUMNS = [
   "quarters_table",
@@ -40,6 +40,7 @@ const normalizeFundamental = (row = {}) => {
 };
 
 const createEntry = async (masterId, activeStockId, db = pool) => {
+  await syncSerialSequence(db, "stock_screener_fundamentals", "id");
   const { rows } = await db.query(
     `
       INSERT INTO stock_screener_fundamentals (master_id, active_stock_id)
@@ -48,6 +49,21 @@ const createEntry = async (masterId, activeStockId, db = pool) => {
     `,
     [Number(masterId), Number(activeStockId)],
   );
+  return rows[0] ? normalizeFundamental(rows[0]) : null;
+};
+
+const linkActiveStockId = async (masterId, activeStockId, db = pool) => {
+  const { rows } = await db.query(
+    `
+      UPDATE stock_screener_fundamentals
+      SET active_stock_id = $2,
+          updated_at = NOW()
+      WHERE master_id = $1
+      RETURNING *
+    `,
+    [Number(masterId), Number(activeStockId)],
+  );
+
   return rows[0] ? normalizeFundamental(rows[0]) : null;
 };
 
@@ -60,6 +76,7 @@ const upsertByMasterId = async (data, db = pool) => {
   const ratiosTable = ensureObject(data.ratios_table || inputTables.ratios);
   const shareholdingsTable = ensureObject(data.shareholdings_table || inputTables.shareholdings);
 
+  await syncSerialSequence(db, "stock_screener_fundamentals", "id");
   const { rows } = await db.query(
     `
       INSERT INTO stock_screener_fundamentals (
@@ -155,6 +172,7 @@ const listMasterFreshness = async (db = pool) => {
 module.exports = {
   normalizeFundamental,
   createEntry,
+  linkActiveStockId,
   upsertByMasterId,
   updateLegacyEntry,
   getByMasterId,

@@ -84,7 +84,7 @@ const updateRawStockStatus = async (req, res) => {
       });
     }
 
-    const allowedStatus = ["approved", "rejected"];
+    const allowedStatus = ["approved", "rejected", "missing_token"];
     if (!allowedStatus.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -100,6 +100,8 @@ const updateRawStockStatus = async (req, res) => {
         message:
           status === "approved"
             ? "Raw stock approved. Use master create API to add it to active stock."
+            : status === "missing_token"
+              ? "Raw stock marked as missing token"
             : `Raw stock marked as ${status}`,
         rawStock,
         activeStock: null,

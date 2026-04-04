@@ -37,7 +37,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const ELIGIBLE_RAWSTOCKS_SQL = `
   SELECT
-    id, token, symbol, name, exch_seg, instrumenttype, lotsize, tick_size, status
+    id, token, symbol, name, exch_seg, instrumenttype, lotsize, tick_size, status, security_code
   FROM public.rawstocks
   WHERE
     status = 'pending'
@@ -81,7 +81,7 @@ const fetchEligibleRawStocks = async () => {
     const { rows } = await pool.query(
       `
         SELECT
-          id, token, symbol, name, exch_seg, instrumenttype, lotsize, tick_size, status
+          id, token, symbol, name, exch_seg, instrumenttype, lotsize, tick_size, status, security_code
         FROM public.rawstocks
         WHERE ${clauses.join(" AND ")}
         LIMIT 1
@@ -107,6 +107,7 @@ const ensureMasterGraph = async (rawStock, client) => {
     raw_stock_id: rawStock.id,
     screener_status: "PENDING",
     screener_url: buildScreenerUrl(rawStock),
+    security_code: rawStock.security_code,
   };
 
   let masterStock = await stockMasterRepo.getByToken(body.token, client);
@@ -133,6 +134,8 @@ const ensureMasterGraph = async (rawStock, client) => {
   );
   if (!fundamentals) {
     await stockFundamentalsService.createEntry(masterStock.id, activeStock.id, client);
+  } else if (Number(fundamentals.active_stock_id) !== Number(activeStock.id)) {
+    await stockFundamentalsService.linkActiveStockId(masterStock.id, activeStock.id, client);
   }
 
   await rawstocksRepo.updateById(rawStock.id, { status: "approved" }, client);

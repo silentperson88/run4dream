@@ -1,4 +1,5 @@
 const { pool } = require("../config/db");
+const { syncSerialSequence } = require("./common");
 
 const normalizeToken = (row = {}) => ({
   ...row,
@@ -14,6 +15,7 @@ const normalizeToken = (row = {}) => ({
 });
 
 const create = async (payload, db = pool) => {
+  await syncSerialSequence(db, "tokens", "id");
   const { rows } = await db.query(
     `
       INSERT INTO tokens (

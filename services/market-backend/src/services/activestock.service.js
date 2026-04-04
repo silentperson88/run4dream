@@ -1,8 +1,8 @@
 const activeStocksRepo = require("../repositories/activeStocks.repository");
+const stockMasterRepo = require("../repositories/stockMaster.repository");
 
 exports.addStock = async (stockData, db) => {
   if (
-    !stockData?.token ||
     !stockData?.exchange ||
     !stockData?.symbol ||
     !stockData?.master_id
@@ -11,7 +11,7 @@ exports.addStock = async (stockData, db) => {
   }
 
   try {
-    return await activeStocksRepo.create({ ...stockData, is_active: true }, db);
+    return await activeStocksRepo.create(stockData, db);
   } catch (err) {
     if (err.code === "23505") {
       throw new Error("Stock already active");
@@ -25,17 +25,29 @@ exports.getActiveStocks = async (page = 1, limit = 50, search = "") =>
 
 exports.getAllActiveStocks = async () => activeStocksRepo.listActive();
 
-exports.deactivateStock = async (token) =>
-  activeStocksRepo.updateByToken(token, { is_active: false });
+exports.deactivateStock = async (token) => {
+  const stock = await activeStocksRepo.getByToken(token);
+  if (!stock) return null;
+  const master = await stockMasterRepo.getById(stock.master_id);
+  if (!master) return null;
+  return stockMasterRepo.updateById(master.id, { is_active: false });
+};
 
 exports.getActiveStockByToken = async (token) => {
   const stock = await activeStocksRepo.getByToken(token);
   if (!stock) throw new Error("Active stock not found");
+  const master = await stockMasterRepo.getById(stock.master_id);
+  if (!master?.is_active) throw new Error("Active stock not found");
   return stock;
 };
 
-exports.getActiveStockByMasterId = async (masterId) =>
-  activeStocksRepo.getByMasterId(masterId);
+exports.getActiveStockByMasterId = async (masterId) => {
+  const stock = await activeStocksRepo.getByMasterId(masterId);
+  if (!stock) return null;
+  const master = await stockMasterRepo.getById(masterId);
+  if (!master?.is_active) return null;
+  return stock;
+};
 
 exports.updateActiveStockPrice = async (token, priceData) => {
   const updatedStock = await activeStocksRepo.updateByToken(token, {
@@ -91,9 +103,21 @@ exports.bulkUpdateStocksInOHLCMode = async (stocks) => {
 };
 
 exports.toggleActiveStock = async (token) => {
-  const stock = await activeStocksRepo.toggleByToken(token);
+  const stock = await activeStocksRepo.getByToken(token);
   if (!stock) throw new Error("Active stock not found");
-  return stock;
+  const master = await stockMasterRepo.getById(stock.master_id);
+  if (!master) throw new Error("Active stock not found");
+
+  const updatedMaster = await stockMasterRepo.updateById(master.id, {
+    is_active: !Boolean(master.is_active),
+  });
+
+  if (!updatedMaster) throw new Error("Active stock not found");
+
+  return {
+    ...stock,
+    master_is_active: updatedMaster.is_active,
+  };
 };
 
 exports.deleteActiveStock = async (token) => {

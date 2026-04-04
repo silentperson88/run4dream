@@ -7,7 +7,13 @@ const {
   createRawStock,
   updateRawStockStatus,
 } = require("../controllers/adminRawStock.controller");
-const { getStockUniverseAudit, markStockUniverseFilteredInactive } = require("../controllers/stockUniverseAudit.controller");
+const {
+  getStockUniverseAudit,
+  markStockUniverseFilteredInactive,
+  markStockUniverseRowsInactive,
+  addStockFromAudit,
+  addStocksFromAudit,
+} = require("../controllers/stockUniverseAudit.controller");
 const { activateStock } = require("../controllers/adminActiveStock.controller");
 const {
   loginWithTOTP,
@@ -28,6 +34,9 @@ router.get("/raw-stocks", getAllRawStocks);
 router.post("/raw-stock", createRawStock);
 router.get("/stock-universe-audit", getStockUniverseAudit);
 router.post("/stock-universe-audit/mark-inactive", markStockUniverseFilteredInactive);
+router.post("/stock-universe-audit/mark-row-inactive", markStockUniverseRowsInactive);
+router.post("/stock-universe-audit/add-stock", addStockFromAudit);
+router.post("/stock-universe-audit/add-stocks", addStocksFromAudit);
 
 // get raw stock price
 router.post("/raw-stock-price", getRawStockPrice);

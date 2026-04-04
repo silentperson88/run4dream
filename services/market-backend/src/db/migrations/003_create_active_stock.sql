@@ -1,12 +1,11 @@
 CREATE TABLE IF NOT EXISTS active_stock (
   id BIGSERIAL PRIMARY KEY,
   master_id BIGINT NOT NULL UNIQUE REFERENCES stock_master(id) ON DELETE CASCADE,
-  token VARCHAR(64) NOT NULL UNIQUE,
+  token VARCHAR(64) UNIQUE,
   symbol VARCHAR(64) NOT NULL,
   name VARCHAR(255) NOT NULL UNIQUE,
   exchange VARCHAR(8) NOT NULL,
   instrumenttype VARCHAR(32) NOT NULL DEFAULT 'EQ',
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,
   added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ltp NUMERIC(18,6) NOT NULL DEFAULT 0,
   open NUMERIC(18,6) NOT NULL DEFAULT 0,
@@ -23,4 +22,3 @@ CREATE TABLE IF NOT EXISTS active_stock (
 );
 
 CREATE INDEX IF NOT EXISTS idx_active_stock_token ON active_stock(token);
-CREATE INDEX IF NOT EXISTS idx_active_stock_is_active ON active_stock(is_active);

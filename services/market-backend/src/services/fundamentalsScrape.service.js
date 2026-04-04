@@ -3,12 +3,37 @@ const { buildMappedFundamentals } = require("./fundamentalsMapper.service");
 
 const PRIMARY_FIELD_KEYS = ["market_cap", "current_price", "book_value"];
 
+const normalizeScreenerUrl = (value) => String(value || "").trim().replace(/\/+$/g, "/");
+
 const buildFallbackScreenerUrl = (url) => {
-  if (!url || typeof url !== "string") return null;
-  const trimmed = url.trim();
+  const trimmed = normalizeScreenerUrl(url);
   if (!trimmed) return null;
-  const fallback = trimmed.replace(/\/consolidated\/?$/i, "/");
+  const fallback = trimmed.replace(/\/consolidated\/?$/i, "");
   return fallback === trimmed ? null : fallback;
+};
+
+const buildSecurityCodeScreenerUrl = (securityCode) => {
+  const code = String(securityCode || "").trim();
+  if (!code) return null;
+  return `https://www.screener.in/company/${encodeURIComponent(code)}`;
+};
+
+const buildScreenerUrlCandidates = (url, securityCode) => {
+  const primaryUrl = normalizeScreenerUrl(url);
+  const candidates = [];
+
+  if (primaryUrl) {
+    candidates.push(primaryUrl);
+    const fallbackUrl = buildFallbackScreenerUrl(primaryUrl);
+    if (fallbackUrl) candidates.push(fallbackUrl);
+  }
+
+  const securityCodeUrl = buildSecurityCodeScreenerUrl(securityCode);
+  if (securityCodeUrl) {
+    candidates.push(securityCodeUrl);
+  }
+
+  return Array.from(new Set(candidates.filter(Boolean)));
 };
 
 const isValidPrimaryNumber = (value, { allowZero = false } = {}) => {
@@ -58,88 +83,73 @@ const validatePrimarySnapshot = (snapshot = {}) => {
 
 const scrapeWithFallback = async (url, options = {}) => {
   const attempts = [];
-  const primaryUrl = url || "";
+  const candidates = buildScreenerUrlCandidates(url, options?.securityCode);
+  const primaryUrl = candidates[0] || "";
   if (!primaryUrl) {
     throw new Error("Missing screener_url");
   }
 
-  const primaryData = await analyzeScreenerHtmlRendered(primaryUrl, options);
-  const primarySnapshot = getPrimarySnapshot(primaryData);
-  const primaryValidation = validatePrimarySnapshot(primarySnapshot);
-  attempts.push({
-    url: primaryUrl,
-    valid: primaryValidation.valid,
-    failedFields: primaryValidation.failedFields,
-  });
+  let lastError = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidateUrl = candidates[i];
+    try {
+      const candidateData = await analyzeScreenerHtmlRendered(candidateUrl, options);
+      const candidateSnapshot = getPrimarySnapshot(candidateData);
+      const candidateValidation = validatePrimarySnapshot(candidateSnapshot);
+      attempts.push({
+        url: candidateUrl,
+        valid: candidateValidation.valid,
+        failedFields: candidateValidation.failedFields,
+      });
 
-  if (primaryValidation.valid) {
-    if (!hasUsableFundamentals(primaryData)) {
-      const error = new Error("Empty/invalid fundamentals extracted from screener");
-      error.failedFields = primaryValidation.failedFields;
-      error.attempts = attempts;
-      throw error;
+      if (!candidateValidation.valid) {
+        lastError = new Error(
+          `Primary fundamentals missing on ${candidateUrl} (${candidateValidation.failedFields.join(", ")})`,
+        );
+        lastError.failedFields = candidateValidation.failedFields;
+        lastError.attempts = attempts;
+        lastError.selectedUrl = candidateUrl;
+        continue;
+      }
+
+      if (!hasUsableFundamentals(candidateData)) {
+        lastError = new Error("Empty/invalid fundamentals extracted from screener");
+        lastError.failedFields = candidateValidation.failedFields;
+        lastError.attempts = attempts;
+        lastError.selectedUrl = candidateUrl;
+        continue;
+      }
+
+      return {
+        data: candidateData,
+        selectedUrl: candidateUrl,
+        fallbackUsed: i > 0,
+        attempts,
+        primaryValidation: candidateValidation,
+      };
+    } catch (err) {
+      lastError = err;
+      attempts.push({
+        url: candidateUrl,
+        valid: false,
+        failedFields: Array.isArray(err?.failedFields) ? err.failedFields : [],
+      });
+      lastError.attempts = attempts;
+      lastError.selectedUrl = candidateUrl;
     }
-    return {
-      data: primaryData,
-      selectedUrl: primaryUrl,
-      fallbackUsed: false,
-      attempts,
-      primaryValidation,
-    };
   }
 
-  const fallbackUrl = buildFallbackScreenerUrl(primaryUrl);
-  if (!fallbackUrl) {
-    const error = new Error(
-      `Primary fundamentals missing on ${primaryUrl} (${primaryValidation.failedFields.join(", ")})`,
-    );
-    error.failedFields = primaryValidation.failedFields;
-    error.attempts = attempts;
-    throw error;
-  }
-
-  const fallbackData = await analyzeScreenerHtmlRendered(fallbackUrl, options);
-  const fallbackSnapshot = getPrimarySnapshot(fallbackData);
-  const fallbackValidation = validatePrimarySnapshot(fallbackSnapshot);
-  attempts.push({
-    url: fallbackUrl,
-    valid: fallbackValidation.valid,
-    failedFields: fallbackValidation.failedFields,
-  });
-
-  if (!fallbackValidation.valid) {
-    const error = new Error(
-      `Primary fundamentals missing on fallback URL too (${fallbackValidation.failedFields.join(", ")})`,
-    );
-    error.failedFields = fallbackValidation.failedFields;
-    error.attempts = attempts;
-    error.primaryUrl = primaryUrl;
-    error.fallbackUrl = fallbackUrl;
-    throw error;
-  }
-
-  if (!hasUsableFundamentals(fallbackData)) {
-    const error = new Error("Empty/invalid fundamentals extracted from fallback screener");
-    error.failedFields = fallbackValidation.failedFields;
-    error.attempts = attempts;
-    error.primaryUrl = primaryUrl;
-    error.fallbackUrl = fallbackUrl;
-    throw error;
-  }
-
-  return {
-    data: fallbackData,
-    selectedUrl: fallbackUrl,
-    fallbackUsed: true,
-    attempts,
-    primaryValidation,
-    fallbackValidation,
-  };
+  if (lastError) throw lastError;
+  const error = new Error("Unable to fetch screener fundamentals");
+  error.attempts = attempts;
+  throw error;
 };
 
 module.exports = {
   PRIMARY_FIELD_KEYS,
   buildFallbackScreenerUrl,
+  buildSecurityCodeScreenerUrl,
+  buildScreenerUrlCandidates,
   getPrimarySnapshot,
   validatePrimarySnapshot,
   scrapeWithFallback,

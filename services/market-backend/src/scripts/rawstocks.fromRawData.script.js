@@ -18,12 +18,12 @@ const toNullableNumber = (value) => {
 };
 
 const normalizeRecord = (record = {}) => {
-  const token = String(record.token || "").trim();
+  const token = String(record.token || "").trim() || null;
   const symbol = String(record.symbol || "").trim();
   const name = String(record.name || "").trim();
   const exchSeg = String(record.exch_seg || record.exchange || "").trim();
 
-  if (!token || !symbol || !name || !exchSeg) return null;
+  if (!symbol || !name || !exchSeg) return null;
 
   return {
     token,
@@ -33,7 +33,8 @@ const normalizeRecord = (record = {}) => {
     instrumenttype: String(record.instrumenttype || "EQ").trim() || "EQ",
     lotsize: toInt(record.lotsize, 1),
     tick_size: toNullableNumber(record.tick_size),
-    status: "pending",
+    status: token ? "pending" : "missing_token",
+    security_code: String(record.security_code || record.securityCode || "").trim() || null,
   };
 };
 
@@ -54,6 +55,7 @@ const UPSERT_COLUMNS = [
   "lotsize",
   "tick_size",
   "status",
+  "security_code",
 ];
 
 const upsertBatch = async (client, rows) => {
@@ -71,14 +73,15 @@ const upsertBatch = async (client, rows) => {
       r.lotsize,
       r.tick_size,
       r.status,
+      r.security_code,
     );
-    return `($${offset + 1},$${offset + 2},$${offset + 3},$${offset + 4},$${offset + 5},$${offset + 6},$${offset + 7},$${offset + 8})`;
+    return `($${offset + 1},$${offset + 2},$${offset + 3},$${offset + 4},$${offset + 5},$${offset + 6},$${offset + 7},$${offset + 8},$${offset + 9})`;
   });
 
   await client.query(
     `
       INSERT INTO rawstocks (
-        token, symbol, name, exch_seg, instrumenttype, lotsize, tick_size, status
+        token, symbol, name, exch_seg, instrumenttype, lotsize, tick_size, status, security_code
       )
       VALUES ${tuples.join(",")}
       ON CONFLICT (token)
@@ -89,7 +92,8 @@ const upsertBatch = async (client, rows) => {
         instrumenttype = EXCLUDED.instrumenttype,
         lotsize = EXCLUDED.lotsize,
         tick_size = EXCLUDED.tick_size,
-        status = EXCLUDED.status
+        status = EXCLUDED.status,
+        security_code = EXCLUDED.security_code
     `,
     values,
   );

@@ -13,6 +13,7 @@ const { REDIS_KEYS } = require("../utils/Constants/redisKey.consants");
 const { enqueueFundamentalsJobs } = require("../schedulers/fundamentals.scheduler");
 const { scrapeWithFallback } = require("../services/fundamentalsScrape.service");
 const { buildMappedFundamentals } = require("../services/fundamentalsMapper.service");
+const stockTechnicalService = require("../services/stockTechnical.service");
 
 const normalizeTextArray = (value) => {
   if (!Array.isArray(value)) return [];
@@ -284,12 +285,20 @@ exports.getStockFundamentalsBySymbol = async (req, res) => {
     const master = await stockMasterService.getMasterStockBySymbol(symbol);
     if (!master) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
 
-    const data = await stockFundamentalsService.getFullStockFundamentals(master.id);
+    const [fundamentalsResult, momentumResult] = await Promise.allSettled([
+      stockFundamentalsService.getFullStockFundamentals(master.id),
+      stockTechnicalService.getMomentumSnapshotByMasterId(master.id),
+    ]);
+
+    const data = fundamentalsResult.status === "fulfilled" ? fundamentalsResult.value : null;
     if (!data) {
       return response(res, 400, responseUtils.FAILED_TO_FETCH_STOCK_FUNDAMENTALS);
     }
 
-    return response(res, 200, responseUtils.SUCCESS, data);
+    return response(res, 200, responseUtils.SUCCESS, {
+      ...data,
+      technicals: momentumResult.status === "fulfilled" ? momentumResult.value : null,
+    });
   } catch (error) {
     return response(res, 500, responseUtils.SERVER_ERROR, error);
   }
@@ -315,9 +324,9 @@ exports.enqueueFundamentalsJob = async (req, res) => {
       return response(res, 400, responseUtils.SCREENER_STATUS_NOT_PENDING);
     }
     if (!masterStock.screener_url) {
-      await stockMasterService.updateMasterStock(masterStock.id, {
-        screener_status: "FAILED",
-      }).catch(() => {});
+    await stockMasterService.updateMasterStock(masterStock.id, {
+      screener_status: "FAILED",
+    }).catch(() => {});
       return response(res, 400, responseUtils.SCREENER_URL_NOT_EXIST);
     }
 
@@ -394,9 +403,9 @@ exports.previewFundamentalsByName = async (req, res) => {
       return response(res, 400, responseUtils.SCREENER_STATUS_NOT_PENDING);
     }
     if (!masterStock.screener_url) {
-      await stockMasterService.updateMasterStock(masterStock.id, {
-        screener_status: "FAILED",
-      }).catch(() => {});
+    await stockMasterService.updateMasterStock(masterStock.id, {
+      screener_status: "FAILED",
+    }).catch(() => {});
       return response(res, 400, responseUtils.SCREENER_URL_NOT_EXIST);
     }
 
@@ -409,7 +418,6 @@ exports.previewFundamentalsByName = async (req, res) => {
         screener_url: result.selectedUrl,
       });
     }
-    await stockMasterService.setFetchCount(masterStock.id, 1);
     await stockMasterService.updateMasterStock(masterStock.id, {
       screener_status: "VALID",
     }).catch(() => {});

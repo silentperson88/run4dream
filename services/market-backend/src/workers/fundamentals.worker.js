@@ -87,24 +87,14 @@ const upsertFundamentals = async (payload, data) => {
     raw_payload: mapped.raw_payload,
     last_updated_at: new Date(),
   });
-
-  if (updated) {
-    await stockMasterService.setFetchCount(masterId, 1);
-  }
   return updated;
 };
 
 const updateMasterFundamentalsStatus = async (masterId, payload = {}) => {
   if (!masterId) return null;
   const updatePayload = {
-    fundamentals_status: payload.fundamentals_status || "PENDING",
-    fundamentals_checked_at: payload.fundamentals_checked_at || new Date(),
-    fundamentals_failed_fields: payload.fundamentals_failed_fields || null,
-    fundamentals_failed_reason: payload.fundamentals_failed_reason || null,
+    screener_status: payload.screener_status || "PENDING",
   };
-  if (payload.screener_status) {
-    updatePayload.screener_status = payload.screener_status;
-  }
   try {
     return await stockMasterService.updateMasterStock(masterId, updatePayload);
   } catch (err) {
@@ -133,6 +123,7 @@ const fetchCandidatesFromDb = async (limit = CANDIDATE_LIMIT) => {
       name: m.name || null,
       symbol: m.symbol || null,
       screener_url: m.screener_url || null,
+      security_code: m.security_code || null,
     });
   }
 
@@ -160,17 +151,10 @@ const fetchSingleCandidate = async () => {
     if (!master?.is_active) {
       throw new Error("Inactive stock cannot be fetched");
     }
-    if (String(master?.screener_status || "PENDING").toUpperCase() !== "PENDING") {
+    if (String(master?.screener_status || "PENDING").toUpperCase() === "VALID") {
       throw new Error(`Screener status is ${String(master?.screener_status || "PENDING").toUpperCase()}`);
     }
-    if (!master?.screener_url) {
-      throw new Error("Missing screener_url");
-    }
     throw new Error("Stock is not eligible for screener fetch");
-  }
-
-  if (!master.screener_url) {
-    throw new Error("Missing screener_url");
   }
 
   const active = await activeStockService.getActiveStockByMasterId(master.id);
@@ -181,6 +165,7 @@ const fetchSingleCandidate = async () => {
       name: master.name || null,
       symbol: master.symbol || null,
       screener_url: master.screener_url || null,
+      security_code: master.security_code || null,
       force: true,
     },
   ];
@@ -199,13 +184,14 @@ const processCandidate = async (payload, position, total) => {
     payload?.symbol ||
     `master_id=${payload?.master_id || "unknown"}`;
   const screenerUrl = master?.screener_url || payload?.screener_url || "";
+  const securityCode = master?.security_code || payload?.security_code || "";
 
   console.log(
     `[fundamentals] In progress ${position}/${total}: ${label} | run=${runtime.singleMode ? "single" : "batch"}`,
   );
 
   try {
-    const result = await scrapeWithFallback(screenerUrl);
+    const result = await scrapeWithFallback(screenerUrl, { securityCode });
     await upsertFundamentals(payload, result.data);
 
     if (masterId && result.fallbackUsed && result.selectedUrl && result.selectedUrl !== screenerUrl) {
@@ -218,10 +204,6 @@ const processCandidate = async (payload, position, total) => {
     }
 
     await updateMasterFundamentalsStatus(masterId, {
-      fundamentals_status: "VALID",
-      fundamentals_checked_at: new Date(),
-      fundamentals_failed_fields: [],
-      fundamentals_failed_reason: null,
       screener_status: "VALID",
     });
 
@@ -229,10 +211,6 @@ const processCandidate = async (payload, position, total) => {
   } catch (err) {
     const failedFields = Array.isArray(err?.failedFields) ? err.failedFields : null;
     await updateMasterFundamentalsStatus(masterId, {
-      fundamentals_status: "FAILED",
-      fundamentals_checked_at: new Date(),
-      fundamentals_failed_fields: failedFields,
-      fundamentals_failed_reason: err?.message || String(err),
       screener_status: "FAILED",
     });
     throw err;

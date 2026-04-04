@@ -3,7 +3,6 @@ const { responseUtils } = require("../utils/Constants/responseContants.utils");
 
 exports.createMasterStock = async (stockData, db) => {
   if (
-    !stockData?.token ||
     !stockData?.exchange ||
     !stockData?.symbol ||
     !(stockData?.raw_stock_id || stockData?.rawStockId)
@@ -56,15 +55,9 @@ exports.canFetchScreener = (stock) => {
   if (!stock) return false;
   return (
     stock.is_active === true &&
-    Boolean(String(stock.screener_url || "").trim()) &&
-    String(stock.screener_status || "PENDING").toUpperCase() === "PENDING"
+    String(stock.screener_status || "PENDING").toUpperCase() !== "VALID"
   );
 };
-
-exports.syncCompanyFromFundamental = async () => stockMasterRepo.syncCompanyFromFundamentals();
-
-exports.setFetchCount = async (id, count = 1, db) =>
-  stockMasterRepo.setFetchCount(id, count, db);
 
 exports.updateHistoryCoverage = async (id, payload = {}, db) =>
   stockMasterRepo.updateHistoryCoverage(id, payload, db);

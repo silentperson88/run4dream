@@ -23,6 +23,7 @@ async function activateStock(req, res) {
       name: rawStock.name,
       exchange: rawStock.exch_seg || rawStock.exchange,
       instrumenttype: rawStock.instrumenttype,
+      security_code: rawStock.security_code,
       master_id,
     });
 

@@ -15,12 +15,13 @@ async function insertRawStocks() {
     try {
       await client.query("BEGIN");
       for (const s of rawSymbols) {
+        const token = String(s.token || "").trim() || null;
         await client.query(
           `
             INSERT INTO rawstocks (
-              token, symbol, name, exch_seg, instrumenttype, lotsize, tick_size, status
+              token, symbol, name, exch_seg, instrumenttype, lotsize, tick_size, status, security_code
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
             ON CONFLICT (token)
             DO UPDATE SET
               symbol = EXCLUDED.symbol,
@@ -28,16 +29,20 @@ async function insertRawStocks() {
               exch_seg = EXCLUDED.exch_seg,
               instrumenttype = EXCLUDED.instrumenttype,
               lotsize = EXCLUDED.lotsize,
-              tick_size = EXCLUDED.tick_size
+              tick_size = EXCLUDED.tick_size,
+              security_code = EXCLUDED.security_code,
+              status = EXCLUDED.status
           `,
           [
-            s.token,
+            token,
             s.symbol,
             s.name,
             s.exch_seg || s.exchange,
             s.instrumenttype || "EQ",
             Number(s.lotsize) || 1,
             Number(s.tick_size) || null,
+            token ? "pending" : "missing_token",
+            String(s.security_code || s.securityCode || "").trim() || null,
           ],
         );
       }

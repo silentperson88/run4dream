@@ -23,6 +23,7 @@
     "worker:active-stocks:price-refresh:test": "node src/workers/active-stocks.price-refresh.worker.js --once",
     "sync:eq:auto-activate": "node src/scripts/auto-activate-eq.script.js",
     "sync:eod:missing-history": "node src/scripts/fetch-missing-eod-history.script.js",
+    "sync:eod:remap-master-id": "node src/scripts/eod.remap-master-id.script.js",
     "fundamentals:backfill-structured": "node src/scripts/backfill-structured-fundamentals.script.js",
     "fundamentals:schema-audit": "node src/scripts/fundamentals-schema-audit.script.js",
     "fundamentals:apply-final-schema": "node src/scripts/fundamentals.apply-final-schema.script.js",

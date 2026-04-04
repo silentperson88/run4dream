@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS rawstocks (
   id BIGSERIAL PRIMARY KEY,
-  token VARCHAR(64) NOT NULL UNIQUE,
+  token VARCHAR(64) UNIQUE,
   symbol VARCHAR(64) NOT NULL,
   name VARCHAR(255) NOT NULL UNIQUE,
   exch_seg VARCHAR(32) NOT NULL,
@@ -9,5 +9,5 @@ CREATE TABLE IF NOT EXISTS rawstocks (
   tick_size NUMERIC(18,8),
   status VARCHAR(16) NOT NULL DEFAULT 'pending',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CHECK (status IN ('pending', 'approved', 'rejected'))
+  CHECK (status IN ('pending', 'missing_token', 'approved', 'rejected'))
 );

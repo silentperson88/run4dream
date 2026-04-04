@@ -11,7 +11,7 @@ const smartApiPriceService = new SmartApiPriceService();
 
 const BATCH_SIZE = 50;
 const PAUSE_MS = Number(process.env.ACTIVE_PRICE_REFRESH_PAUSE_MS || 10_000);
-const DEFAULT_MODE = "OHLC";
+const DEFAULT_MODE = "FULL";
 
 const argv = process.argv.slice(2);
 const readArg = (...names) => {
@@ -35,6 +35,20 @@ const runtime = {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const normalizeToken = (value) => String(value ?? "").trim();
+const pickNumber = (...values) => {
+  for (const value of values) {
+    const num = Number(value);
+    if (Number.isFinite(num)) return num;
+  }
+  return 0;
+};
+
+const setAngelOneStatus = async (masterId, status) => {
+  if (!masterId) return null;
+  return stockMasterService.updateMasterStock(Number(masterId), {
+    angelone_fetch_status: status,
+  });
+};
 
 const chunk = (items, size) => {
   const batches = [];
@@ -46,7 +60,7 @@ const chunk = (items, size) => {
 
 const fetchActiveStocks = async () => {
   const values = [];
-  const where = ["is_active = TRUE"];
+  const where = ["sm.is_active = TRUE"];
 
   if (runtime.exchange === "NSE" || runtime.exchange === "BSE") {
     values.push(runtime.exchange);
@@ -61,8 +75,10 @@ const fetchActiveStocks = async () => {
       a.token,
       a.symbol,
       a.name,
-      a.exchange
+      a.exchange,
+      sm.is_active AS master_is_active
     FROM active_stock a
+    INNER JOIN stock_master sm ON sm.id = a.master_id
     ${whereClause}
     ORDER BY
       CASE
@@ -143,40 +159,56 @@ const getPriceForBatch = async (batch) => {
 const applyPriceBatch = async (batch, priceResult) => {
   const updated = [];
   const failed = [];
+  const skipped = [];
+  const unfetched = [];
 
   for (const row of batch) {
     const token = normalizeToken(row.token);
+    if (!token) {
+      skipped.push(row);
+      await setAngelOneStatus(row.master_id, "skipped_tokenless");
+      continue;
+    }
+    if (priceResult.unfetchedTokenSet.has(token)) {
+      unfetched.push(row);
+      await setAngelOneStatus(row.master_id, "unfetched");
+      continue;
+    }
+
     const fetched = priceResult.fetchedByToken.get(token);
 
-    const ltp = Number(fetched?.ltp ?? fetched?.close ?? fetched?.open ?? fetched?.high ?? 0);
+    const ltp = pickNumber(fetched?.ltp, fetched?.close, fetched?.open, fetched?.high);
     if (!(ltp > 0)) {
       failed.push(row);
+      await setAngelOneStatus(row.master_id, "failed");
       continue;
     }
 
     const updatedRow = await activeStockService.updateActiveStockPrice(token, {
       ltp,
-      open: Number(fetched?.open ?? 0),
-      high: Number(fetched?.high ?? 0),
-      low: Number(fetched?.low ?? 0),
-      close: Number(fetched?.close ?? 0),
-      percentChange: Number(fetched?.percentChange ?? fetched?.change ?? 0),
-      avgPrice: Number(fetched?.avgPrice ?? fetched?.averagePrice ?? 0),
-      lowerCircuit: Number(fetched?.lowerCircuit ?? 0),
-      upperCircuit: Number(fetched?.upperCircuit ?? 0),
-      week52Low: Number(fetched?.week52Low ?? 0),
-      week52High: Number(fetched?.week52High ?? 0),
+      open: pickNumber(fetched?.open),
+      high: pickNumber(fetched?.high),
+      low: pickNumber(fetched?.low),
+      close: pickNumber(fetched?.close),
+      percentChange: pickNumber(fetched?.percentChange, fetched?.change, fetched?.netChange),
+      avgPrice: pickNumber(fetched?.avgPrice, fetched?.averagePrice),
+      lowerCircuit: pickNumber(fetched?.lowerCircuit),
+      upperCircuit: pickNumber(fetched?.upperCircuit),
+      week52Low: pickNumber(fetched?.week52Low, fetched?.["52WeekLow"]),
+      week52High: pickNumber(fetched?.week52High, fetched?.["52WeekHigh"]),
     });
 
     if (!updatedRow) {
       failed.push(row);
+      await setAngelOneStatus(row.master_id, "failed");
       continue;
     }
 
     updated.push(row);
+    await setAngelOneStatus(row.master_id, "fetched");
   }
 
-  return { updated, failed };
+  return { updated, failed, skipped, unfetched };
 };
 
 const deleteLinkedMasterGraph = async (masterId) => {
@@ -217,6 +249,8 @@ const run = async () => {
   let totalUpdated = 0;
   let totalFailed = 0;
   let totalDeleted = 0;
+  let totalSkipped = 0;
+  let totalUnfetched = 0;
 
   for (let i = 0; i < batches.length; i += 1) {
     const batch = batches[i];
@@ -237,9 +271,11 @@ const run = async () => {
       continue;
     }
 
-    const { updated, failed } = await applyPriceBatch(batch, priceResult);
+    const { updated, failed, skipped, unfetched } = await applyPriceBatch(batch, priceResult);
     totalUpdated += updated.length;
     totalFailed += failed.length;
+    totalSkipped += skipped.length;
+    totalUnfetched += unfetched.length;
 
     for (const row of failed) {
       try {
@@ -257,7 +293,7 @@ const run = async () => {
     }
 
     console.log(
-      `Batch ${i + 1} done | updated=${updated.length} failed=${failed.length} deleted=${failed.length}`,
+      `Batch ${i + 1} done | updated=${updated.length} unfetched=${unfetched.length} failed=${failed.length} skipped=${skipped.length} deleted=${failed.length}`,
     );
 
     if (i < batches.length - 1) {
@@ -270,6 +306,8 @@ const run = async () => {
     totalProcessed: selectedStocks.length,
     totalUpdated,
     totalFailed,
+    totalSkipped,
+    totalUnfetched,
     totalDeleted,
   });
 };

@@ -1,45 +1,88 @@
 const { pool } = require("../config/db");
-const { toNumber } = require("./common");
+const { toNumber, syncSerialSequence } = require("./common");
+const { normalizeSymbolForMatch, normalizeNameForMatch, TRAILING_SYMBOL_SUFFIX_PATTERN } = require("../utils/stockSymbolMatch");
+
+const parseHistoryRange = (value) => {
+  const historyRange = String(value ?? "").trim();
+  if (!historyRange) {
+    return {
+      history_range: null,
+      hasHistoryData: false,
+      historyDataFromDate: null,
+      historyDataToDate: null,
+    };
+  }
+
+  const [fromDate, toDate] = historyRange.split(/\s+to\s+/i);
+  return {
+    history_range: historyRange,
+    hasHistoryData: true,
+    historyDataFromDate: String(fromDate || "").trim() || null,
+    historyDataToDate: String(toDate || "").trim() || null,
+  };
+};
 
 const normalizeMaster = (row = {}) => ({
   ...row,
-  fetch_count: toNumber(row.fetch_count),
   screener_status: row.screener_status || "PENDING",
+  angelone_fetch_status: row.angelone_fetch_status || "not_attempted",
+  security_code: row.security_code,
+  ...parseHistoryRange(row.history_range),
 });
 
 const create = async (payload, db = pool) => {
-  const { rows } = await db.query(
-    `
-      INSERT INTO stock_master (
-        company, symbol, exchange, name, sector, industry, screener_url,
-        screener_status, fetch_count, is_active, token, raw_stock_id
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-      RETURNING *
-    `,
-    [
-      payload.company ?? null,
-      payload.symbol,
-      payload.exchange,
-      payload.name,
-      payload.sector ?? null,
-      payload.industry ?? null,
-      payload.screener_url ?? "",
-      payload.screener_status ?? "PENDING",
-      toNumber(payload.fetch_count, 0),
-      payload.is_active ?? true,
-      payload.token,
-      payload.raw_stock_id ?? payload.rawStockId ?? null,
-    ],
-  );
-  return rows[0] ? normalizeMaster(rows[0]) : null;
+  const params = [
+    payload.symbol,
+    payload.exchange,
+    payload.name,
+    payload.screener_url ?? "",
+    payload.screener_status ?? "PENDING",
+    payload.is_active ?? true,
+    payload.token ?? null,
+    payload.raw_stock_id ?? payload.rawStockId ?? null,
+    String(payload.security_code ?? payload.securityCode ?? "").trim() || null,
+    payload.history_range ?? null,
+  ];
+
+  const insertMaster = async () => {
+    await syncSerialSequence(db, "stock_master", "id");
+    const { rows } = await db.query(
+      `
+        INSERT INTO stock_master (
+          symbol, exchange, name, screener_url,
+          screener_status, is_active, token, raw_stock_id, security_code, history_range
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        RETURNING *
+      `,
+      params,
+    );
+    return rows[0] ? normalizeMaster(rows[0]) : null;
+  };
+
+  return insertMaster();
 };
 
 const updateById = async (id, data = {}, db = pool) => {
   const sets = [];
   const values = [Number(id)];
+  const ignoredKeys = new Set([
+    "company",
+    "sector",
+    "industry",
+    "fetch_count",
+    "has_history_data",
+    "history_data_from_date",
+    "history_data_to_date",
+    "history_requested_from_date",
+    "history_requested_to_date",
+    "fundamentals_checked_at",
+    "fundamentals_failed_fields",
+    "fundamentals_failed_reason",
+  ]);
   Object.entries(data).forEach(([key, value]) => {
     const col = key === "rawStockId" ? "raw_stock_id" : key;
+    if (ignoredKeys.has(col)) return;
     values.push(value);
     sets.push(`${col} = $${values.length}`);
   });
@@ -70,18 +113,66 @@ const getByToken = async (token, db = pool) => {
   return rows[0] ? normalizeMaster(rows[0]) : null;
 };
 
-const getBySymbolOrName = async (symbol, db = pool) => {
+const getBySymbolAndExchange = async (symbol, exchange, db = pool) => {
   const { rows } = await db.query(
-    `SELECT * FROM stock_master WHERE symbol = $1 OR name = $1 LIMIT 1`,
-    [symbol],
+    `SELECT * FROM stock_master WHERE symbol = $1 AND exchange = $2 LIMIT 1`,
+    [String(symbol ?? "").trim(), String(exchange ?? "").trim().toUpperCase()],
+  );
+  return rows[0] ? normalizeMaster(rows[0]) : null;
+};
+
+const getBySymbol = async (symbol, db = pool) => {
+  const { rows } = await db.query(
+    `SELECT * FROM stock_master WHERE symbol = $1 LIMIT 1`,
+    [String(symbol ?? "").trim()],
+  );
+  return rows[0] ? normalizeMaster(rows[0]) : null;
+};
+
+const getByNormalizedSymbol = async (symbol, db = pool) => {
+  const key = normalizeSymbolForMatch(symbol);
+  if (!key) return null;
+  const { rows } = await db.query(
+    `
+      SELECT *
+      FROM stock_master
+      WHERE regexp_replace(regexp_replace(upper(symbol), '${TRAILING_SYMBOL_SUFFIX_PATTERN}', '', 'gi'),
+                           '[^A-Z0-9]+', '', 'g') = $1
+      LIMIT 1
+    `,
+    [key],
   );
   return rows[0] ? normalizeMaster(rows[0]) : null;
 };
 
 const getByName = async (name, db = pool) => {
+  const key = normalizeNameForMatch(name);
+  if (!key) return null;
   const { rows } = await db.query(
-    `SELECT * FROM stock_master WHERE name = $1 LIMIT 1`,
-    [name],
+    `
+      SELECT *
+      FROM stock_master
+      WHERE regexp_replace(lower(name), '[^a-z0-9]+', '', 'g')
+        = $1
+      LIMIT 1
+    `,
+    [key.toLowerCase()],
+  );
+  return rows[0] ? normalizeMaster(rows[0]) : null;
+};
+
+const getBySecurityCode = async (securityCode, db = pool) => {
+  const { rows } = await db.query(
+    `SELECT * FROM stock_master WHERE security_code = $1 LIMIT 1`,
+    [String(securityCode ?? "").trim()],
+  );
+  return rows[0] ? normalizeMaster(rows[0]) : null;
+};
+
+const getBySymbolOrName = async (symbol, db = pool) => {
+  const { rows } = await db.query(
+    `SELECT * FROM stock_master WHERE symbol = $1 OR name = $1 LIMIT 1`,
+    [symbol],
   );
   return rows[0] ? normalizeMaster(rows[0]) : null;
 };
@@ -105,7 +196,7 @@ const list = async ({ page = 1, limit = 50, search = "", is_active = true } = {}
 
   if (search && search.trim()) {
     values.push(`%${search.trim().toLowerCase()}%`);
-    where.push(`(lower(name) LIKE $${values.length} OR lower(company) LIKE $${values.length})`);
+    where.push(`(lower(name) LIKE $${values.length} OR lower(symbol) LIKE $${values.length})`);
   }
 
   const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
@@ -137,35 +228,9 @@ const list = async ({ page = 1, limit = 50, search = "", is_active = true } = {}
   };
 };
 
-const setFetchCount = async (id, count, db = pool) => {
-  const { rows } = await db.query(
-    `UPDATE stock_master SET fetch_count = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-    [Number(count), Number(id)],
-  );
-  return rows[0] ? normalizeMaster(rows[0]) : null;
-};
-
-const syncCompanyFromFundamentals = async (db = pool) => {
-  const result = await db.query(
-    `
-      UPDATE stock_master AS sm
-      SET company = sf.company,
-          updated_at = NOW()
-      FROM stock_screener_fundamentals AS sf
-      WHERE sf.master_id = sm.id
-        AND sf.company IS NOT NULL
-        AND sf.company <> ''
-        AND (sm.company IS NULL OR sm.company = '')
-    `,
-  );
-  return { modified: result.rowCount || 0 };
-};
-
 const updateHistoryCoverage = async (
   id,
   {
-    requestedFromDate = null,
-    requestedToDate = null,
     actualFromDate = null,
     actualToDate = null,
   } = {},
@@ -175,29 +240,17 @@ const updateHistoryCoverage = async (
     `
       UPDATE stock_master
       SET
-        history_requested_from_date = COALESCE($2::date, history_requested_from_date),
-        history_requested_to_date = COALESCE($3::date, history_requested_to_date),
-        history_data_from_date = CASE
-          WHEN $4::date IS NULL THEN history_data_from_date
-          WHEN history_data_from_date IS NULL THEN $4::date
-          ELSE LEAST(history_data_from_date, $4::date)
-        END,
-        history_data_to_date = CASE
-          WHEN $5::date IS NULL THEN history_data_to_date
-          WHEN history_data_to_date IS NULL THEN $5::date
-          ELSE GREATEST(history_data_to_date, $5::date)
-        END,
-        has_history_data = CASE
-          WHEN (history_data_from_date IS NOT NULL OR $4::date IS NOT NULL)
-           AND (history_data_to_date IS NOT NULL OR $5::date IS NOT NULL)
-            THEN TRUE
-          ELSE has_history_data
+        history_range = CASE
+          WHEN $2::date IS NULL AND $3::date IS NULL THEN history_range
+          WHEN $2::date IS NULL THEN to_char($3::date, 'YYYY-MM-DD')
+          WHEN $3::date IS NULL THEN to_char($2::date, 'YYYY-MM-DD')
+          ELSE to_char($2::date, 'YYYY-MM-DD') || ' to ' || to_char($3::date, 'YYYY-MM-DD')
         END,
         updated_at = NOW()
       WHERE id = $1
       RETURNING *
     `,
-    [Number(id), requestedFromDate, requestedToDate, actualFromDate, actualToDate],
+    [Number(id), actualFromDate, actualToDate],
   );
 
   return rows[0] ? normalizeMaster(rows[0]) : null;
@@ -209,11 +262,13 @@ module.exports = {
   updateById,
   getById,
   getByToken,
+  getBySymbolAndExchange,
+  getBySymbol,
+  getByNormalizedSymbol,
+  getBySecurityCode,
   getBySymbolOrName,
   getByName,
   listActive,
   list,
-  setFetchCount,
-  syncCompanyFromFundamentals,
   updateHistoryCoverage,
 };

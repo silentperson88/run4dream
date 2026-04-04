@@ -1,5 +1,26 @@
 const { pool } = require("../config/db");
-const { toNumber } = require("./common");
+const { toNumber, syncSerialSequence } = require("./common");
+const { normalizeSymbolForMatch, normalizeNameForMatch, TRAILING_SYMBOL_SUFFIX_PATTERN } = require("../utils/stockSymbolMatch");
+
+const parseHistoryRange = (value) => {
+  const historyRange = String(value ?? "").trim();
+  if (!historyRange) {
+    return {
+      historyRange: null,
+      hasHistoryData: false,
+      historyDataFromDate: null,
+      historyDataToDate: null,
+    };
+  }
+
+  const [fromDate, toDate] = historyRange.split(/\s+to\s+/i);
+  return {
+    historyRange,
+    hasHistoryData: true,
+    historyDataFromDate: String(fromDate || "").trim() || null,
+    historyDataToDate: String(toDate || "").trim() || null,
+  };
+};
 
 const normalizeActiveStock = (row = {}) => ({
   ...row,
@@ -14,46 +35,52 @@ const normalizeActiveStock = (row = {}) => ({
   upperCircuit: toNumber(row.upper_circuit),
   week52Low: toNumber(row.week52_low),
   week52High: toNumber(row.week52_high),
-  hasHistoryData: Boolean(row.has_history_data),
-  historyDataFromDate: row.history_data_from_date || null,
-  historyDataToDate: row.history_data_to_date || null,
-  historyRequestedFromDate: row.history_requested_from_date || null,
-  historyRequestedToDate: row.history_requested_to_date || null,
+  security_code: row.security_code,
+  master_is_active:
+    row.master_is_active === undefined ? undefined : Boolean(row.master_is_active),
+  ...parseHistoryRange(row.history_range),
 });
 
 const create = async (payload, db = pool) => {
-  const { rows } = await db.query(
-    `
-      INSERT INTO active_stock (
-        master_id, token, symbol, name, exchange, instrumenttype, is_active,
-        ltp, open, high, low, close, percent_change, avg_price,
-        lower_circuit, upper_circuit, week52_low, week52_high
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-      RETURNING *
-    `,
-    [
-      Number(payload.master_id),
-      payload.token,
-      payload.symbol,
-      payload.name,
-      payload.exchange,
-      payload.instrumenttype || "EQ",
-      payload.is_active ?? true,
-      toNumber(payload.ltp, 0),
-      toNumber(payload.open, 0),
-      toNumber(payload.high, 0),
-      toNumber(payload.low, 0),
-      toNumber(payload.close, 0),
-      toNumber(payload.percent_change ?? payload.percentChange, 0),
-      toNumber(payload.avg_price ?? payload.avgPrice, 0),
-      toNumber(payload.lower_circuit ?? payload.lowerCircuit, 0),
-      toNumber(payload.upper_circuit ?? payload.upperCircuit, 0),
-      toNumber(payload.week52_low ?? payload.week52Low, 0),
-      toNumber(payload.week52_high ?? payload.week52High, 0),
-    ],
-  );
-  return rows[0] ? normalizeActiveStock(rows[0]) : null;
+  const params = [
+    Number(payload.master_id),
+    payload.token,
+    payload.symbol,
+    payload.name,
+    payload.exchange,
+    payload.instrumenttype || "EQ",
+    String(payload.security_code ?? payload.securityCode ?? "").trim() || null,
+    toNumber(payload.ltp, 0),
+    toNumber(payload.open, 0),
+    toNumber(payload.high, 0),
+    toNumber(payload.low, 0),
+    toNumber(payload.close, 0),
+    toNumber(payload.percent_change ?? payload.percentChange, 0),
+    toNumber(payload.avg_price ?? payload.avgPrice, 0),
+    toNumber(payload.lower_circuit ?? payload.lowerCircuit, 0),
+    toNumber(payload.upper_circuit ?? payload.upperCircuit, 0),
+    toNumber(payload.week52_low ?? payload.week52Low, 0),
+    toNumber(payload.week52_high ?? payload.week52High, 0),
+  ];
+
+  const insertActive = async () => {
+    await syncSerialSequence(db, "active_stock", "id");
+    const { rows } = await db.query(
+      `
+        INSERT INTO active_stock (
+          master_id, token, symbol, name, exchange, instrumenttype,
+          security_code, ltp, open, high, low, close, percent_change, avg_price,
+          lower_circuit, upper_circuit, week52_low, week52_high
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+        RETURNING *
+      `,
+      params,
+    );
+    return rows[0] ? normalizeActiveStock(rows[0]) : null;
+  };
+
+  return insertActive();
 };
 
 const getByToken = async (token, db = pool) => {
@@ -72,9 +99,67 @@ const getByMasterId = async (masterId, db = pool) => {
   return rows[0] ? normalizeActiveStock(rows[0]) : null;
 };
 
+const getBySymbolAndExchange = async (symbol, exchange, db = pool) => {
+  const { rows } = await db.query(
+    `SELECT * FROM active_stock WHERE symbol = $1 AND exchange = $2 LIMIT 1`,
+    [String(symbol ?? "").trim(), String(exchange ?? "").trim().toUpperCase()],
+  );
+  return rows[0] ? normalizeActiveStock(rows[0]) : null;
+};
+
+const getBySymbol = async (symbol, db = pool) => {
+  const { rows } = await db.query(
+    `SELECT * FROM active_stock WHERE symbol = $1 LIMIT 1`,
+    [String(symbol ?? "").trim()],
+  );
+  return rows[0] ? normalizeActiveStock(rows[0]) : null;
+};
+
+const getByNormalizedSymbol = async (symbol, db = pool) => {
+  const key = normalizeSymbolForMatch(symbol);
+  if (!key) return null;
+  const { rows } = await db.query(
+    `
+      SELECT a.*
+      FROM active_stock a
+      INNER JOIN stock_master sm ON sm.id = a.master_id
+      WHERE sm.is_active = TRUE
+        AND regexp_replace(regexp_replace(upper(a.symbol), '${TRAILING_SYMBOL_SUFFIX_PATTERN}', '', 'gi'),
+                           '[^A-Z0-9]+', '', 'g') = $1
+      LIMIT 1
+    `,
+    [key],
+  );
+  return rows[0] ? normalizeActiveStock(rows[0]) : null;
+};
+
+const getByName = async (name, db = pool) => {
+  const key = normalizeNameForMatch(name);
+  if (!key) return null;
+  const { rows } = await db.query(
+    `
+      SELECT *
+      FROM active_stock
+      WHERE regexp_replace(lower(name), '[^a-z0-9]+', '', 'g')
+        = $1
+      LIMIT 1
+    `,
+    [key.toLowerCase()],
+  );
+  return rows[0] ? normalizeActiveStock(rows[0]) : null;
+};
+
+const getBySecurityCode = async (securityCode, db = pool) => {
+  const { rows } = await db.query(
+    `SELECT * FROM active_stock WHERE security_code = $1 LIMIT 1`,
+    [String(securityCode ?? "").trim()],
+  );
+  return rows[0] ? normalizeActiveStock(rows[0]) : null;
+};
+
 const listActive = async ({ page, limit, search = "" } = {}, db = pool) => {
   const queryValues = [];
-  const where = ["a.is_active = TRUE"];
+  const where = ["sm.is_active = TRUE"];
 
   if (search && String(search).trim()) {
     queryValues.push(`%${String(search).trim().toLowerCase()}%`);
@@ -91,11 +176,8 @@ const listActive = async ({ page, limit, search = "" } = {}, db = pool) => {
       `
         SELECT
           a.*,
-          sm.has_history_data,
-          sm.history_data_from_date,
-          sm.history_data_to_date,
-          sm.history_requested_from_date,
-          sm.history_requested_to_date
+          sm.is_active AS master_is_active,
+          sm.history_range
         FROM active_stock a
         LEFT JOIN stock_master sm ON sm.id = a.master_id
         ${whereClause}
@@ -116,11 +198,8 @@ const listActive = async ({ page, limit, search = "" } = {}, db = pool) => {
     `
       SELECT
         a.*,
-        sm.has_history_data,
-        sm.history_data_from_date,
-        sm.history_data_to_date,
-        sm.history_requested_from_date,
-        sm.history_requested_to_date
+        sm.is_active AS master_is_active,
+        sm.history_range
       FROM active_stock a
       LEFT JOIN stock_master sm ON sm.id = a.master_id
       ${whereClause}
@@ -136,7 +215,13 @@ const listByMasterIds = async (masterIds = [], db = pool) => {
   const ids = Array.from(new Set(masterIds.map(Number).filter((n) => Number.isFinite(n) && n > 0)));
   if (!ids.length) return [];
   const { rows } = await db.query(
-    `SELECT * FROM active_stock WHERE master_id = ANY($1::bigint[])`,
+    `
+      SELECT a.*, sm.is_active AS master_is_active
+      FROM active_stock a
+      LEFT JOIN stock_master sm ON sm.id = a.master_id
+      WHERE a.master_id = ANY($1::bigint[])
+        AND sm.is_active = TRUE
+    `,
     [ids],
   );
   return rows.map(normalizeActiveStock);
@@ -150,12 +235,13 @@ const updateByToken = async (token, data = {}, db = pool) => {
     upperCircuit: "upper_circuit",
     week52Low: "week52_low",
     week52High: "week52_high",
+    securityCode: "security_code",
   };
 
   const sets = [];
   const values = [token];
   Object.entries(data).forEach(([key, value]) => {
-    if (key === "updatedAt" || key === "last_update") return;
+    if (key === "updatedAt" || key === "last_update" || key === "is_active") return;
     const col = map[key] || key;
     values.push(value);
     sets.push(`${col} = $${values.length}`);
@@ -174,21 +260,82 @@ const updateByToken = async (token, data = {}, db = pool) => {
   return rows[0] ? normalizeActiveStock(rows[0]) : null;
 };
 
-const toggleByToken = async (token, db = pool) => {
+const updateByMasterId = async (masterId, data = {}, db = pool) => {
+  const map = {
+    percentChange: "percent_change",
+    avgPrice: "avg_price",
+    lowerCircuit: "lower_circuit",
+    upperCircuit: "upper_circuit",
+    week52Low: "week52_low",
+    week52High: "week52_high",
+    securityCode: "security_code",
+  };
+
+  const sets = [];
+  const values = [Number(masterId)];
+  Object.entries(data).forEach(([key, value]) => {
+    if (key === "updatedAt" || key === "last_update" || key === "is_active") return;
+    const col = map[key] || key;
+    values.push(value);
+    sets.push(`${col} = $${values.length}`);
+  });
+
+  if (!sets.length) return getByMasterId(masterId, db);
+
+  values.push(new Date());
+  sets.push(`last_update = $${values.length}`);
+
   const { rows } = await db.query(
-    `
-      UPDATE active_stock
-      SET is_active = NOT is_active, last_update = NOW()
-      WHERE token = $1
-      RETURNING *
-    `,
-    [token],
+    `UPDATE active_stock SET ${sets.join(", ")} WHERE master_id = $1 RETURNING *`,
+    values,
   );
+
   return rows[0] ? normalizeActiveStock(rows[0]) : null;
 };
 
+const toggleByToken = async (token, db = pool) => {
+  const { rows: stockRows } = await db.query(
+    `SELECT * FROM active_stock WHERE token = $1 LIMIT 1`,
+    [token],
+  );
+  const stock = stockRows[0];
+  if (!stock) return null;
+
+  const { rows: masterRows } = await db.query(
+    `
+      UPDATE stock_master
+      SET is_active = NOT is_active, updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [Number(stock.master_id)],
+  );
+
+  const master = masterRows[0];
+  if (!master) return null;
+
+  return normalizeActiveStock({
+    ...stock,
+    master_is_active: master.is_active,
+  });
+};
+
 const deleteByToken = async (token, db = pool) => {
-  const { rowCount } = await db.query(`DELETE FROM active_stock WHERE token = $1`, [token]);
+  const { rows: stockRows } = await db.query(
+    `SELECT * FROM active_stock WHERE token = $1 LIMIT 1`,
+    [token],
+  );
+  const stock = stockRows[0];
+  if (!stock) return false;
+
+  const { rowCount } = await db.query(
+    `
+      UPDATE stock_master
+      SET is_active = FALSE, updated_at = NOW()
+      WHERE id = $1
+    `,
+    [Number(stock.master_id)],
+  );
   return rowCount > 0;
 };
 
@@ -211,11 +358,15 @@ const bulkUpsertByToken = async (stocks = [], fields = [], db = pool) => {
           upperCircuit: "upper_circuit",
           week52Low: "week52_low",
           week52High: "week52_high",
-          updatedAt: "last_update",
-          last_update: "last_update",
-        };
+        securityCode: "security_code",
+        updatedAt: "last_update",
+        last_update: "last_update",
+        is_active: null,
+      };
+        if (map[key] === null) return null;
         return `${map[key] || key} = $${idx + 2}`;
       })
+      .filter(Boolean)
       .join(", ");
 
     const values = [stock.token, ...Object.keys(updates).map((k) => updates[k])];
@@ -228,9 +379,15 @@ module.exports = {
   create,
   getByToken,
   getByMasterId,
+  getBySymbolAndExchange,
+  getBySymbol,
+  getByNormalizedSymbol,
+  getByName,
+  getBySecurityCode,
   listActive,
   listByMasterIds,
   updateByToken,
+  updateByMasterId,
   toggleByToken,
   deleteByToken,
   bulkUpsertByToken,

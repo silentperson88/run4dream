@@ -31,25 +31,9 @@ const PRIMARY_OVERVIEW_FIELDS = ["market_cap", "current_price", "book_value"];
 const ensureQualityColumns = async (db = pool) => {
   await db.query(`
     ALTER TABLE stock_master
-      ADD COLUMN IF NOT EXISTS fundamentals_status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
       ADD COLUMN IF NOT EXISTS fundamentals_checked_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS fundamentals_failed_fields TEXT[],
       ADD COLUMN IF NOT EXISTS fundamentals_failed_reason TEXT
-  `);
-
-  await db.query(`
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'chk_stock_master_fundamentals_status'
-      ) THEN
-        ALTER TABLE stock_master
-          ADD CONSTRAINT chk_stock_master_fundamentals_status
-          CHECK (fundamentals_status IN ('PENDING', 'VALID', 'PARTIAL', 'FAILED'));
-      END IF;
-    END $$;
   `);
 };
 
@@ -157,7 +141,6 @@ const buildRowsForTable = (tableKey, bucket, payload, snapshot) => {
 
 const updateStockMasterStatus = async (client, snapshot, overviewRow) => {
   const missing = PRIMARY_OVERVIEW_FIELDS.filter((field) => !isUsableNumber(overviewRow?.[field]));
-  const status = missing.length ? "FAILED" : "VALID";
   const reason = missing.length
     ? `Missing/invalid primary fields: ${missing.join(", ")}`
     : null;
@@ -166,7 +149,6 @@ const updateStockMasterStatus = async (client, snapshot, overviewRow) => {
     `
       UPDATE stock_master
       SET
-        fundamentals_status = $2,
         fundamentals_checked_at = NOW(),
         fundamentals_failed_fields = $3::text[],
         fundamentals_failed_reason = $4,
@@ -175,13 +157,12 @@ const updateStockMasterStatus = async (client, snapshot, overviewRow) => {
     `,
     [
       Number(snapshot.master_id),
-      status,
       missing.length ? missing : null,
       reason,
     ],
   );
 
-  return { status, missing, reason };
+  return { status: missing.length ? "FAILED" : "VALID", missing, reason };
 };
 
 const run = async () => {

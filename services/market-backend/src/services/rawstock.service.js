@@ -8,6 +8,9 @@ exports.getRawStockById = async (id) => {
 };
 
 exports.createRawStock = async (data, db) => {
+  if (!data?.symbol || !data?.name || !(data?.exchange || data?.exch_seg)) {
+    throw new Error("symbol, name and exchange are required");
+  }
   const stock = await rawstocksRepo.create(data, db);
   if (!stock) throw new Error("Failed to create raw stock");
   return stock;
