@@ -11,11 +11,9 @@ CREATE INDEX IF NOT EXISTS idx_rawstocks_symbol_trgm ON rawstocks USING GIN (low
 -- stock_master: search/listing + active/screener/fetch flow
 CREATE INDEX IF NOT EXISTS idx_stock_master_symbol ON stock_master(symbol);
 CREATE INDEX IF NOT EXISTS idx_stock_master_token ON stock_master(token);
-CREATE INDEX IF NOT EXISTS idx_stock_master_fetch_count ON stock_master(fetch_count);
 CREATE INDEX IF NOT EXISTS idx_stock_master_screener_url ON stock_master(screener_url);
 CREATE INDEX IF NOT EXISTS idx_stock_master_name_trgm ON stock_master USING GIN (lower(name) gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_stock_master_symbol_trgm ON stock_master USING GIN (lower(symbol) gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_stock_master_active_fetch ON stock_master(is_active, fetch_count);
 
 -- active_stock: live quote updates/toggles + lookup by token/master
 CREATE INDEX IF NOT EXISTS idx_active_stock_master_id ON active_stock(master_id);
