@@ -55,7 +55,7 @@ exports.canFetchScreener = (stock) => {
   if (!stock) return false;
   return (
     stock.is_active === true &&
-    String(stock.screener_status || "PENDING").toUpperCase() !== "VALID"
+    ["PENDING", "FAILED"].includes(String(stock.screener_status || "PENDING").toUpperCase())
   );
 };
 

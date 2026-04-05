@@ -18,18 +18,24 @@ const buildSecurityCodeScreenerUrl = (securityCode) => {
   return `https://www.screener.in/company/${encodeURIComponent(code)}`;
 };
 
-const buildScreenerUrlCandidates = (url, securityCode) => {
+const buildScreenerUrlCandidates = (url, securityCode, options = {}) => {
   const primaryUrl = normalizeScreenerUrl(url);
   const candidates = [];
+  const securityCodeUrl = buildSecurityCodeScreenerUrl(securityCode);
 
-  if (primaryUrl) {
-    candidates.push(primaryUrl);
-    const fallbackUrl = buildFallbackScreenerUrl(primaryUrl);
-    if (fallbackUrl) candidates.push(fallbackUrl);
+  if (options?.preferSecurityCodeFirst && securityCodeUrl) {
+    candidates.push(securityCodeUrl);
   }
 
-  const securityCodeUrl = buildSecurityCodeScreenerUrl(securityCode);
-  if (securityCodeUrl) {
+  if (primaryUrl) {
+    if (!options?.securityCodeOnly) {
+      candidates.push(primaryUrl);
+      const fallbackUrl = buildFallbackScreenerUrl(primaryUrl);
+      if (fallbackUrl) candidates.push(fallbackUrl);
+    }
+  }
+
+  if (!options?.preferSecurityCodeFirst && securityCodeUrl) {
     candidates.push(securityCodeUrl);
   }
 
@@ -83,11 +89,18 @@ const validatePrimarySnapshot = (snapshot = {}) => {
 
 const scrapeWithFallback = async (url, options = {}) => {
   const attempts = [];
-  const candidates = buildScreenerUrlCandidates(url, options?.securityCode);
+  const candidates = buildScreenerUrlCandidates(url, options?.securityCode, options);
   const primaryUrl = candidates[0] || "";
   if (!primaryUrl) {
     throw new Error("Missing screener_url");
   }
+
+  const terminalFailure = async (failedUrl, reason) => {
+    const error = new Error(reason);
+    error.attempts = attempts;
+    error.failedUrl = failedUrl || null;
+    throw error;
+  };
 
   let lastError = null;
   for (let i = 0; i < candidates.length; i += 1) {
@@ -102,21 +115,16 @@ const scrapeWithFallback = async (url, options = {}) => {
         failedFields: candidateValidation.failedFields,
       });
 
-      if (!candidateValidation.valid) {
+      if (!candidateValidation.valid || !hasUsableFundamentals(candidateData)) {
         lastError = new Error(
           `Primary fundamentals missing on ${candidateUrl} (${candidateValidation.failedFields.join(", ")})`,
         );
         lastError.failedFields = candidateValidation.failedFields;
         lastError.attempts = attempts;
         lastError.selectedUrl = candidateUrl;
-        continue;
-      }
-
-      if (!hasUsableFundamentals(candidateData)) {
-        lastError = new Error("Empty/invalid fundamentals extracted from screener");
-        lastError.failedFields = candidateValidation.failedFields;
-        lastError.attempts = attempts;
-        lastError.selectedUrl = candidateUrl;
+        if (options?.strictPendingFlow) {
+          return terminalFailure(candidateUrl, lastError.message);
+        }
         continue;
       }
 

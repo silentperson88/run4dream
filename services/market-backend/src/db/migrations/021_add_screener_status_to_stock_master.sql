@@ -10,13 +10,13 @@ BEGIN
   ) THEN
     ALTER TABLE stock_master
       ADD CONSTRAINT chk_stock_master_screener_status
-      CHECK (screener_status IN ('PENDING', 'VALID', 'FAILED'));
+      CHECK (screener_status IN ('PENDING', 'VALID', 'FAILED', 'FAILED_NO_RETRY'));
   END IF;
 END $$;
 
 UPDATE stock_master
 SET screener_status = CASE
-  WHEN screener_url IS NULL OR screener_url = '' THEN 'FAILED'
+  WHEN screener_url IS NULL OR screener_url = '' THEN 'FAILED_NO_RETRY'
   ELSE COALESCE(screener_status, 'PENDING')
 END;
 

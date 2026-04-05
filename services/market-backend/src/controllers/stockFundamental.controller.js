@@ -199,23 +199,23 @@ exports.fetchStockFundamentals = async (req, res) => {
       return response(res, 400, responseUtils.SCREENER_STATUS_NOT_PENDING);
     }
 
-    if (!masterStock.screener_url) {
-      await stockMasterService.updateMasterStock(masterStock.id, {
-        screener_status: "FAILED",
-      }).catch(() => {});
-      return response(res, 400, responseUtils.SCREENER_URL_NOT_EXIST);
-    }
+      if (!masterStock.screener_url) {
+        await stockMasterService.updateMasterStock(masterStock.id, {
+        screener_status: "FAILED_NO_RETRY",
+        }).catch(() => {});
+        return response(res, 400, responseUtils.SCREENER_URL_NOT_EXIST);
+      }
 
     const result = await pythonApi.post(
       PYTHON_ENDPOINTS.FETCH_STOCK_FUNDAMENTALS,
       { url: masterStock.screener_url },
     );
 
-    if (result.status !== 200) {
-      await stockMasterService.updateMasterStock(masterStock.id, {
-        screener_status: "FAILED",
-      }).catch(() => {});
-      return response(
+      if (result.status !== 200) {
+        await stockMasterService.updateMasterStock(masterStock.id, {
+        screener_status: "FAILED_NO_RETRY",
+        }).catch(() => {});
+        return response(
         res,
         400,
         responseUtils.FAILED_TO_FETCH_STOCK_FUNDAMENTALS,
@@ -253,12 +253,12 @@ exports.fetchStockFundamentals = async (req, res) => {
     };
 
     const data = await stockFundamentalsService.updateEntry(fundamentals);
-    if (!data) {
-      await stockMasterService.updateMasterStock(masterStock.id, {
-        screener_status: "FAILED",
-      }).catch(() => {});
-      return response(res, 400, responseUtils.FAILED_TO_FETCH_STOCK_FUNDAMENTALS);
-    }
+      if (!data) {
+        await stockMasterService.updateMasterStock(masterStock.id, {
+        screener_status: "FAILED_NO_RETRY",
+        }).catch(() => {});
+        return response(res, 400, responseUtils.FAILED_TO_FETCH_STOCK_FUNDAMENTALS);
+      }
 
     await stockMasterService.updateMasterStock(masterStock.id, {
       screener_status: "VALID",
@@ -267,7 +267,7 @@ exports.fetchStockFundamentals = async (req, res) => {
   } catch (error) {
     if (req.body?.master_id) {
       await stockMasterService.updateMasterStock(req.body.master_id, {
-        screener_status: "FAILED",
+        screener_status: "FAILED_NO_RETRY",
       }).catch(() => {});
     }
     return response(
@@ -324,9 +324,9 @@ exports.enqueueFundamentalsJob = async (req, res) => {
       return response(res, 400, responseUtils.SCREENER_STATUS_NOT_PENDING);
     }
     if (!masterStock.screener_url) {
-    await stockMasterService.updateMasterStock(masterStock.id, {
-      screener_status: "FAILED",
-    }).catch(() => {});
+      await stockMasterService.updateMasterStock(masterStock.id, {
+      screener_status: "FAILED_NO_RETRY",
+      }).catch(() => {});
       return response(res, 400, responseUtils.SCREENER_URL_NOT_EXIST);
     }
 
@@ -403,9 +403,9 @@ exports.previewFundamentalsByName = async (req, res) => {
       return response(res, 400, responseUtils.SCREENER_STATUS_NOT_PENDING);
     }
     if (!masterStock.screener_url) {
-    await stockMasterService.updateMasterStock(masterStock.id, {
-      screener_status: "FAILED",
-    }).catch(() => {});
+      await stockMasterService.updateMasterStock(masterStock.id, {
+      screener_status: "FAILED_NO_RETRY",
+      }).catch(() => {});
       return response(res, 400, responseUtils.SCREENER_URL_NOT_EXIST);
     }
 
@@ -426,11 +426,11 @@ exports.previewFundamentalsByName = async (req, res) => {
   } catch (error) {
     if (req.body?.name) {
       const masterStock = await stockMasterService.getMasterStockByName(req.body.name).catch(() => null);
-      if (masterStock?.id) {
-        await stockMasterService.updateMasterStock(masterStock.id, {
-          screener_status: "FAILED",
-        }).catch(() => {});
-      }
+        if (masterStock?.id) {
+          await stockMasterService.updateMasterStock(masterStock.id, {
+          screener_status: "FAILED_NO_RETRY",
+          }).catch(() => {});
+        }
     }
     return response(
       res,

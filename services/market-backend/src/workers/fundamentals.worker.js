@@ -4,7 +4,14 @@ require("../config/db");
 const stockFundamentalsService = require("../services/stockFundamental.service");
 const activeStockService = require("../services/activestock.service");
 const stockMasterService = require("../services/stockMaster.service");
-const { scrapeWithFallback } = require("../services/fundamentalsScrape.service");
+const {
+  buildFallbackScreenerUrl,
+  buildSecurityCodeScreenerUrl,
+  getPrimarySnapshot,
+  hasUsableFundamentals,
+  validatePrimarySnapshot,
+} = require("../services/fundamentalsScrape.service");
+const { analyzeScreenerHtmlRendered } = require("../services/screenerHtmlRendered.service");
 const { buildMappedFundamentals } = require("../services/fundamentalsMapper.service");
 
 const JOB_DELAY_MS = Number(process.env.FUNDAMENTALS_JOB_DELAY_MS || 5000);
@@ -36,6 +43,8 @@ const runtime = {
 };
 
 runtime.singleMode = Boolean(runtime.masterId || runtime.token || runtime.symbol || runtime.once);
+
+const processedMasterIds = new Set();
 
 const getActiveStockId = async (masterId) => {
   if (!masterId) return null;
@@ -90,6 +99,29 @@ const upsertFundamentals = async (payload, data) => {
   return updated;
 };
 
+const scrapeCandidateUrl = async (url, browser) => {
+  if (!url) {
+    throw new Error("Missing screener_url");
+  }
+
+  const data = await analyzeScreenerHtmlRendered(url, {
+    browser,
+    waitUntil: "domcontentloaded",
+  });
+  const snapshot = getPrimarySnapshot(data);
+  const validation = validatePrimarySnapshot(snapshot);
+  if (!validation.valid || !hasUsableFundamentals(data)) {
+    const error = new Error(
+      `Primary fundamentals missing on ${url} (${validation.failedFields.join(", ")})`,
+    );
+    error.failedFields = validation.failedFields;
+    error.selectedUrl = url;
+    throw error;
+  }
+
+  return data;
+};
+
 const updateMasterFundamentalsStatus = async (masterId, payload = {}) => {
   if (!masterId) return null;
   const updatePayload = {
@@ -104,7 +136,11 @@ const updateMasterFundamentalsStatus = async (masterId, payload = {}) => {
 
 const fetchCandidatesFromDb = async (limit = CANDIDATE_LIMIT) => {
   const masters = await stockMasterService.getAllMasterStocks();
-  const candidates = masters.filter((m) => stockMasterService.canFetchScreener(m));
+  const candidates = masters.filter(
+    (m) =>
+      stockMasterService.canFetchScreener(m) &&
+      !processedMasterIds.has(String(m.id)),
+  );
 
   const activeStocks = await activeStockService.getActiveStocksByMasterIds(
     candidates.map((m) => m.id),
@@ -184,22 +220,85 @@ const processCandidate = async (payload, position, total) => {
     payload?.symbol ||
     `master_id=${payload?.master_id || "unknown"}`;
   const screenerUrl = master?.screener_url || payload?.screener_url || "";
-  const securityCode = master?.security_code || payload?.security_code || "";
+  const rawSecurityCode = master?.security_code || payload?.security_code || "";
+  const securityCode = master?.is_active && String(rawSecurityCode || "").trim() ? rawSecurityCode : "";
+  const isFailed = String(master?.screener_status || "PENDING").toUpperCase() === "FAILED";
 
   console.log(
     `[fundamentals] In progress ${position}/${total}: ${label} | run=${runtime.singleMode ? "single" : "batch"}`,
   );
 
   try {
-    const result = await scrapeWithFallback(screenerUrl, { securityCode });
-    await upsertFundamentals(payload, result.data);
+    let data = null;
+    let selectedUrl = screenerUrl;
+    let fallbackUsed = false;
 
-    if (masterId && result.fallbackUsed && result.selectedUrl && result.selectedUrl !== screenerUrl) {
+    if (isFailed) {
+      const securityCodeUrl = buildSecurityCodeScreenerUrl(securityCode);
+      if (!securityCodeUrl) {
+        const error = new Error("Failed stock has no usable security code");
+        error.failedFields = [];
+        throw error;
+      }
+      data = await scrapeCandidateUrl(securityCodeUrl);
+      selectedUrl = securityCodeUrl;
+      fallbackUsed = true;
+    } else {
+      const primaryUrl = screenerUrl;
+      const fallbackUrl = buildFallbackScreenerUrl(primaryUrl);
+      const securityCodeUrl = buildSecurityCodeScreenerUrl(securityCode);
+
+      try {
+        data = await scrapeCandidateUrl(primaryUrl);
+      } catch (primaryErr) {
+        if (fallbackUrl) {
+          try {
+            data = await scrapeCandidateUrl(fallbackUrl);
+            selectedUrl = fallbackUrl;
+            fallbackUsed = true;
+          } catch (fallbackErr) {
+            if (securityCodeUrl) {
+              try {
+                data = await scrapeCandidateUrl(securityCodeUrl);
+                selectedUrl = securityCodeUrl;
+                fallbackUsed = true;
+              } catch (securityErr) {
+                const error = new Error("All screener steps failed");
+                error.failedFields = securityErr?.failedFields || fallbackErr?.failedFields || primaryErr?.failedFields || [];
+                throw error;
+              }
+            } else {
+              const error = new Error("All screener steps failed");
+              error.failedFields = fallbackErr?.failedFields || primaryErr?.failedFields || [];
+              throw error;
+            }
+          }
+        } else if (securityCodeUrl) {
+          try {
+            data = await scrapeCandidateUrl(securityCodeUrl);
+            selectedUrl = securityCodeUrl;
+            fallbackUsed = true;
+          } catch (securityErr) {
+            const error = new Error("All screener steps failed");
+            error.failedFields = securityErr?.failedFields || primaryErr?.failedFields || [];
+            throw error;
+          }
+        } else {
+          const error = new Error("All screener steps failed");
+          error.failedFields = primaryErr?.failedFields || [];
+          throw error;
+        }
+      }
+    }
+
+    await upsertFundamentals(payload, data);
+
+    if (masterId && fallbackUsed && selectedUrl && selectedUrl !== screenerUrl) {
       await stockMasterService.updateMasterStock(masterId, {
-        screener_url: result.selectedUrl,
+        screener_url: selectedUrl,
       });
       console.log(
-        `[fundamentals] Updated screener_url for ${label} => ${result.selectedUrl}`,
+        `[fundamentals] Updated screener_url for ${label} => ${selectedUrl}`,
       );
     }
 
@@ -207,11 +306,11 @@ const processCandidate = async (payload, position, total) => {
       screener_status: "VALID",
     });
 
-    return { ok: true, label, result };
+    return { ok: true, label };
   } catch (err) {
     const failedFields = Array.isArray(err?.failedFields) ? err.failedFields : null;
     await updateMasterFundamentalsStatus(masterId, {
-      screener_status: "FAILED",
+      screener_status: "FAILED_NO_RETRY",
     });
     throw err;
   }
@@ -246,6 +345,9 @@ const runWorker = async () => {
       try {
         const { label } = await processCandidate(payload, i + 1, runTotal);
         doneCount += 1;
+        if (payload?.master_id) {
+          processedMasterIds.add(String(payload.master_id));
+        }
         console.log(
           `[fundamentals] Done ${i + 1}/${runTotal}: ${label} | done=${doneCount}, failed=${failedCount}`,
         );
