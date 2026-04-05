@@ -82,7 +82,10 @@ const extractCompanyInfo = ($) => {
   container.find("#top-ratios li").each((_, el) => {
     const $el = $(el);
     const name = normalizeText($el.find(".name").first().text());
-    const value = normalizeText($el.find(".value").first().text());
+    const valueNode = $el.find(".value").first();
+    const rawValue = normalizeText(valueNode.text());
+    const numericValue = normalizeText(valueNode.find(".number").first().text());
+    const value = numericValue || rawValue;
     if (name) topRatios.push({ name, value: value || null });
   });
 

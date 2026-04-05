@@ -13,6 +13,7 @@ const parseNumeric = (value) => {
   const cleaned = text
     .replace(/,/g, "")
     .replace(/₹/g, "")
+    .replace(/₹/g, "")
     .replace(/Rs\.?/gi, "")
     .replace(/Cr\.?/gi, "")
     .replace(/%/g, "")

@@ -19,4 +19,5 @@
 **/rawData/
 **/generated-audio/
 **/uploads/
+**/checking.js
 **/*.log
