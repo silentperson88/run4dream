@@ -11,5 +11,6 @@ CREATE INDEX IF NOT EXISTS idx_orders_open_partial_created
 CREATE INDEX IF NOT EXISTS idx_user_portfolios_user_status_created
   ON user_portfolios(user_id, status, created_at DESC);
 
+ALTER TABLE active_stock ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 CREATE INDEX IF NOT EXISTS idx_active_stock_symbol_active
   ON active_stock(symbol, is_active);

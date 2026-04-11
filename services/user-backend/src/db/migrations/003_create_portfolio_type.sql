@@ -13,5 +13,6 @@
   CHECK (risk_level IN ('NONE','LOW','MEDIUM','HIGH'))
 );
 
+ALTER TABLE portfolio_type ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 CREATE INDEX IF NOT EXISTS idx_portfolio_type_is_active ON portfolio_type(is_active);
 CREATE INDEX IF NOT EXISTS idx_portfolio_type_code ON portfolio_type(code);

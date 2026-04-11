@@ -22,5 +22,6 @@
   last_update TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE active_stock ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 CREATE INDEX IF NOT EXISTS idx_user_active_stock_symbol ON active_stock(symbol);
 CREATE INDEX IF NOT EXISTS idx_user_active_stock_is_active ON active_stock(is_active);

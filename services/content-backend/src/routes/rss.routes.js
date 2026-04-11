@@ -22,6 +22,10 @@ const saveValidator = [
   body("source").isString().withMessage("source is required"),
   body("pubDate").optional().isString().withMessage("pubDate must be a string"),
 ];
+const updateDraftValidator = [
+  body("images").optional().isArray().withMessage("images must be an array"),
+  body("templateMusicSelection").optional().isObject().withMessage("templateMusicSelection must be an object"),
+];
 
 const processOneValidator = [
   body("link").isString().withMessage("link is required"),
@@ -29,14 +33,31 @@ const processOneValidator = [
 const fetchBodyValidator = [
   body("link").isString().withMessage("link is required"),
 ];
+const improveTemplateValidator = [
+  body("templateType")
+    .isIn(["templateOne", "templateTwo", "templateThree"])
+    .withMessage("templateType must be templateOne, templateTwo, or templateThree"),
+  body("cleanedText")
+    .optional()
+    .isString()
+    .withMessage("cleanedText must be a string"),
+  body("title")
+    .optional()
+    .isString()
+    .withMessage("title must be a string"),
+];
 
 router.get("/rss", authMiddleware, rssValidator, validate, controller.getRss);
 router.get("/rss/items", authMiddleware, listValidator, validate, controller.listRss);
 router.get("/rss/progress", authMiddleware, validate, controller.progressRss);
 
 router.post("/rss/save", authMiddleware, saveValidator, validate, controller.saveRss);
+router.put("/rss/:id/draft", authMiddleware, updateDraftValidator, validate, controller.updateRssDraft);
+router.put("/rss/items/:id/draft", authMiddleware, updateDraftValidator, validate, controller.updateRssDraft);
 router.post("/rss/process-one", authMiddleware, processOneValidator, validate, controller.processOne);
 router.post("/rss/article-body", authMiddleware, fetchBodyValidator, validate, controller.fetchArticleBody);
 router.post("/rss/link-video", authMiddleware, fetchBodyValidator, validate, controller.linkNewsContentVideo);
+router.post("/rss/improve-template", authMiddleware, improveTemplateValidator, validate, controller.improveSocialTemplate);
+router.get("/rss/template-prompts", authMiddleware, controller.getTemplatePrompts);
 
 module.exports = router;

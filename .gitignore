@@ -18,6 +18,8 @@
 **/temp/
 **/rawData/
 **/generated-audio/
+**/generated-video/
 **/uploads/
+**/KhabaroKiDuniya24-asset/
 **/checking.js
 **/*.log

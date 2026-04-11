@@ -1,0 +1,230 @@
+{
+  "platforms": [
+    {
+      "platform": "youtube",
+      "label": "YouTube",
+      "description": "Store the credentials needed to publish videos to your YouTube channel.",
+      "fields": [
+        {
+          "key": "accountLabel",
+          "label": "Account Label",
+          "type": "text",
+          "required": true,
+          "placeholder": "Run4Dream YouTube"
+        },
+        {
+          "key": "channelId",
+          "label": "Channel ID",
+          "type": "text",
+          "required": true,
+          "placeholder": "UCxxxxxxxxxxxxxxxx"
+        },
+        {
+          "key": "googleClientId",
+          "label": "Google Client ID",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "googleClientSecret",
+          "label": "Google Client Secret",
+          "type": "password",
+          "required": true
+        },
+        {
+          "key": "accessToken",
+          "label": "Access Token",
+          "type": "password",
+          "required": true
+        },
+        {
+          "key": "refreshToken",
+          "label": "Refresh Token",
+          "type": "password",
+          "required": true
+        },
+        {
+          "key": "redirectUri",
+          "label": "Redirect URI",
+          "type": "url",
+          "required": true,
+          "placeholder": "http://localhost:3000/social-accounts"
+        },
+        {
+          "key": "tokenExpiresAt",
+          "label": "Token Expires At",
+          "type": "datetime-local",
+          "required": false
+        },
+        {
+          "key": "scopes",
+          "label": "Scopes",
+          "type": "textarea",
+          "required": false,
+          "rows": 2,
+          "placeholder": "youtube.upload, youtube.readonly"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "type": "textarea",
+          "required": false,
+          "rows": 2,
+          "placeholder": "Any internal notes for this connection"
+        }
+      ]
+    },
+    {
+      "platform": "instagram",
+      "label": "Instagram",
+      "description": "Store the Meta credentials and page links needed for Instagram publishing.",
+      "fields": [
+        {
+          "key": "accountLabel",
+          "label": "Account Label",
+          "type": "text",
+          "required": true,
+          "placeholder": "Run4Dream Instagram"
+        },
+        {
+          "key": "metaAppId",
+          "label": "Meta App ID",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "metaAppSecret",
+          "label": "Meta App Secret",
+          "type": "password",
+          "required": true
+        },
+        {
+          "key": "facebookPageId",
+          "label": "Facebook Page ID",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "instagramBusinessAccountId",
+          "label": "Instagram Business Account ID",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "accessToken",
+          "label": "Access Token",
+          "type": "password",
+          "required": true
+        },
+        {
+          "key": "pageAccessToken",
+          "label": "Page Access Token",
+          "type": "password",
+          "required": true
+        },
+        {
+          "key": "redirectUri",
+          "label": "Redirect URI",
+          "type": "url",
+          "required": true,
+          "placeholder": "http://localhost:3000/social-accounts"
+        },
+        {
+          "key": "tokenExpiresAt",
+          "label": "Token Expires At",
+          "type": "datetime-local",
+          "required": false
+        },
+        {
+          "key": "scopes",
+          "label": "Scopes",
+          "type": "textarea",
+          "required": false,
+          "rows": 2,
+          "placeholder": "instagram_basic, pages_manage_posts"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "type": "textarea",
+          "required": false,
+          "rows": 2,
+          "placeholder": "Any internal notes for this connection"
+        }
+      ]
+    },
+    {
+      "platform": "facebook",
+      "label": "Facebook",
+      "description": "Store the Meta credentials and page tokens needed for Facebook publishing.",
+      "fields": [
+        {
+          "key": "accountLabel",
+          "label": "Account Label",
+          "type": "text",
+          "required": true,
+          "placeholder": "Run4Dream Facebook"
+        },
+        {
+          "key": "metaAppId",
+          "label": "Meta App ID",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "metaAppSecret",
+          "label": "Meta App Secret",
+          "type": "password",
+          "required": true
+        },
+        {
+          "key": "facebookPageId",
+          "label": "Facebook Page ID",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "accessToken",
+          "label": "Access Token",
+          "type": "password",
+          "required": true
+        },
+        {
+          "key": "pageAccessToken",
+          "label": "Page Access Token",
+          "type": "password",
+          "required": true
+        },
+        {
+          "key": "redirectUri",
+          "label": "Redirect URI",
+          "type": "url",
+          "required": true,
+          "placeholder": "http://localhost:3000/social-accounts"
+        },
+        {
+          "key": "tokenExpiresAt",
+          "label": "Token Expires At",
+          "type": "datetime-local",
+          "required": false
+        },
+        {
+          "key": "scopes",
+          "label": "Scopes",
+          "type": "textarea",
+          "required": false,
+          "rows": 2,
+          "placeholder": "pages_show_list, pages_manage_posts"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "type": "textarea",
+          "required": false,
+          "rows": 2,
+          "placeholder": "Any internal notes for this connection"
+        }
+      ]
+    }
+  ]
+}

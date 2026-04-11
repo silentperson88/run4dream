@@ -23,6 +23,7 @@
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
 CREATE INDEX IF NOT EXISTS idx_users_is_email_verified ON users(is_email_verified);
 CREATE INDEX IF NOT EXISTS idx_users_email_otp_expires_at ON users(email_otp_expires_at);

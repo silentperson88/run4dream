@@ -1,0 +1,171 @@
+const { fundamentalsMapping } = require("./fundamentalsRow.mapping");
+
+const row = (key, label, children = []) => ({ key, label, children });
+const child = (label, column) => ({ label, column });
+
+const SPLIT_TABLES = {
+  profit_loss: {
+    tableName: "stock_fundamental_profit_loss_periods",
+    rawKey: "profit_loss_table",
+    label: "Profit & Loss",
+    rows: [
+      row("sales", "Sales", [child("Sales Growth %", "sales_yoy_growth_percent")]),
+      row("revenue", "Revenue"),
+      row("financing_profit", "Financing Profit"),
+      row("financing_margin_percent", "Financing Margin %"),
+      row("expenses", "Expenses", [
+        child("Manufacturing Cost %", "expenses_manufacturing_cost_percent"),
+        child("Material Cost %", "expenses_material_cost_percent"),
+        child("Employee Cost %", "expenses_employee_cost_percent"),
+        child("Other Cost %", "expenses_other_cost_percent"),
+      ]),
+      row("operating_profit", "Operating Profit"),
+      row("opm_percent", "OPM %"),
+      row("other_income", "Other Income", [child("Other income normal", "other_income_normal")]),
+      row("interest", "Interest"),
+      row("depreciation", "Depreciation"),
+      row("profit_before_tax", "Profit before tax"),
+      row("tax_percent", "Tax %"),
+      row("net_profit", "Net Profit", [
+        child("Profit Growth %", "net_profit_yoy_profit_growth_percent"),
+        child("Profit from Associates", "net_profit_profit_from_associates"),
+        child("Minority share", "net_profit_minority_share"),
+        child("Profit excl Excep", "net_profit_profit_excl_excep"),
+        child("Exceptional items", "net_profit_exceptional_items"),
+        child("Exceptional items AT", "net_profit_exceptional_items_at"),
+        child("Profit for EPS", "net_profit_profit_for_eps"),
+        child("Profit for PE", "net_profit_profit_for_pe"),
+      ]),
+      row("eps", "EPS in Rs"),
+      row("dividend_payout_percent", "Dividend Payout %"),
+    ],
+  },
+  balance_sheet: {
+    tableName: "stock_fundamental_balance_sheet_periods",
+    rawKey: "balance_sheet_table",
+    label: "Balance Sheet",
+    rows: [
+      row("equity_capital", "Equity Capital"),
+      row("reserves", "Reserves"),
+      row("borrowing", "Borrowing"),
+      row("deposits", "Deposits"),
+      row("borrowings", "Borrowings", [
+        child("Long term Borrowings", "long_term_borrowings"),
+        child("Short term Borrowings", "short_term_borrowings"),
+        child("Other Borrowings", "other_borrowings"),
+      ]),
+      row("other_liabilities", "Other Liabilities", [
+        child("Advance from Customers", "advance_from_customers"),
+        child("Lease Liabilities", "lease_liabilities"),
+        child("Trade Payables", "trade_payables"),
+        child("Other liability items", "other_liability_items"),
+        child("Non controlling int", "non_controlling_int"),
+      ]),
+      row("total_liabilities", "Total Liabilities"),
+      row("fixed_assets", "Fixed Assets", [
+        child("Gross Block", "gross_block"),
+        child("Accumulated Depreciation", "accumulated_depreciation"),
+        child("Building", "building"),
+        child("Land", "land"),
+        child("Plant Machinery", "plant_machinery"),
+        child("Railway sidings", "railway_sidings"),
+        child("Vehicles", "vehicles"),
+        child("Computers", "computers"),
+        child("Furniture n fittings", "furniture_n_fittings"),
+        child("Equipments", "equipments"),
+        child("Other fixed assets", "other_fixed_assets"),
+        child("Intangible Assets", "intangible_assets"),
+      ]),
+      row("cwip", "CWIP"),
+      row("investments", "Investments"),
+      row("other_assets", "Other Assets", [
+        child("Inventories", "inventories"),
+        child("Trade receivables", "trade_receivables"),
+        child("Cash Equivalents", "cash_equivalents"),
+        child("Loans n Advances", "loans_n_advances"),
+        child("Other asset items", "other_asset_items"),
+      ]),
+      row("total_assets", "Total Assets"),
+    ],
+  },
+  cash_flow: {
+    tableName: "stock_fundamental_cash_flow_periods",
+    rawKey: "cash_flow_table",
+    label: "Cash Flow",
+    rows: [
+      row("cash_from_operating_activity", "Cash from Operating Activity", [
+        child("Profit from operations", "profit_from_operations"),
+        child("Working capital changes", "working_capital_changes"),
+        child("Receivables", "receivables"),
+        child("Inventory", "inventory"),
+        child("Payables", "payables"),
+        child("Other WC items", "other_wc_items"),
+        child("Direct taxes", "direct_taxes"),
+        child("Interest received", "interest_received"),
+        child("Dividends received", "dividends_received"),
+        child("Exceptional CF items", "exceptional_cf_items"),
+      ]),
+      row("cash_from_investing_activity", "Cash from Investing Activity", [
+        child("Investments purchased", "investments_purchased"),
+        child("Investments sold", "investments_sold"),
+        child("Fixed assets purchased", "fixed_assets_purchased"),
+        child("Fixed assets sold", "fixed_assets_sold"),
+        child("Acquisition of companies", "acquisition_of_companies"),
+        child("Invest in subsidiaries", "invest_in_subsidiaries"),
+        child("Investment in group cos", "investment_in_group_cos"),
+        child("Loans Advances", "loans_advances"),
+        child("Other investing items", "other_investing_items"),
+      ]),
+      row("cash_from_financing_activity", "Cash from Financing Activity", [
+        child("Proceeds from shares", "proceeds_from_shares"),
+        child("Proceeds from borrowings", "proceeds_from_borrowings"),
+        child("Repayment of borrowings", "repayment_of_borrowings"),
+        child("Interest paid fin", "interest_paid_fin"),
+        child("Dividends paid", "dividends_paid"),
+        child("Financial liabilities", "financial_liabilities"),
+        child("Share application money", "share_application_money"),
+        child("Other financing items", "other_financing_items"),
+      ]),
+      row("net_cash_flow", "Net Cash Flow"),
+    ],
+  },
+  ratios: {
+    tableName: "stock_fundamental_ratios_periods",
+    rawKey: "ratios_table",
+    label: "Ratios",
+    rows: [
+      row("debtor_days", "Debtor Days"),
+      row("inventory_days", "Inventory Days"),
+      row("days_payable", "Days Payable"),
+      row("cash_conversion_cycle", "Cash Conversion Cycle"),
+      row("working_capital_days", "Working Capital Days"),
+      row("roce_percent", "ROCE %"),
+      row("roe_percent", "ROE %"),
+    ],
+  },
+  shareholdings: {
+    tableName: "stock_fundamental_shareholding_periods",
+    rawKey: "shareholdings_table",
+    label: "Shareholding",
+    rows: [
+      row("promoters", "Promoters"),
+      row("fiis", "FIIs"),
+      row("diis", "DIIs"),
+      row("public", "Public"),
+      row("government", "Government"),
+      row("others", "Others"),
+      row("no_of_shareholders", "No. of Shareholders"),
+    ],
+  },
+};
+
+const TABLE_KEYS = Object.keys(SPLIT_TABLES);
+const TABLE_ROW_LABELS = Object.fromEntries(
+  Object.entries(SPLIT_TABLES).map(([key, value]) => [key, fundamentalsMapping[key] || value]),
+);
+
+module.exports = {
+  SPLIT_TABLES,
+  TABLE_KEYS,
+  TABLE_ROW_LABELS,
+};

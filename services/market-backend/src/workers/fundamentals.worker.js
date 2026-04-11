@@ -8,7 +8,7 @@ const {
   buildFallbackScreenerUrl,
   buildSecurityCodeScreenerUrl,
   getPrimarySnapshot,
-  hasUsableFundamentals,
+  hasUsableFundamentals: hasUsableFundamentalsFromScrape,
   validatePrimarySnapshot,
 } = require("../services/fundamentalsScrape.service");
 const { analyzeScreenerHtmlRendered } = require("../services/screenerHtmlRendered.service");
@@ -40,6 +40,7 @@ const runtime = {
   token: readArg("token"),
   symbol: readArg("symbol"),
   once: hasFlag("once", "single", "test"),
+  force: hasFlag("force", "override"),
 };
 
 runtime.singleMode = Boolean(runtime.masterId || runtime.token || runtime.symbol || runtime.once);
@@ -136,11 +137,11 @@ const updateMasterFundamentalsStatus = async (masterId, payload = {}) => {
 
 const fetchCandidatesFromDb = async (limit = CANDIDATE_LIMIT) => {
   const masters = await stockMasterService.getAllMasterStocks();
-  const candidates = masters.filter(
-    (m) =>
-      stockMasterService.canFetchScreener(m) &&
-      !processedMasterIds.has(String(m.id)),
-  );
+  const candidates = masters.filter((m) => {
+    if (processedMasterIds.has(String(m.id))) return false;
+    if (runtime.force) return m?.is_active === true;
+    return stockMasterService.canFetchScreener(m);
+  });
 
   const activeStocks = await activeStockService.getActiveStocksByMasterIds(
     candidates.map((m) => m.id),
@@ -183,7 +184,7 @@ const fetchSingleCandidate = async () => {
     );
   }
 
-  if (!stockMasterService.canFetchScreener(master)) {
+  if (!runtime.force && !stockMasterService.canFetchScreener(master)) {
     if (!master?.is_active) {
       throw new Error("Inactive stock cannot be fetched");
     }

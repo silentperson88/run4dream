@@ -30,8 +30,11 @@ module.exports = {
   markCompleted,
   markFailed,
   getRssByLink,
+  getRssById,
+  listRssItemsWithSchedules,
   linkVideoById,
   markProcessedById,
+  updateRssItemDraft,
 };
 
 async function listRssItems({ userId, limit = 100, offset = 0, fromDate, toDate }) {
@@ -58,7 +61,7 @@ async function listRssItems({ userId, limit = 100, offset = 0, fromDate, toDate 
   const offsetIdx = values.length;
   const res = await db.query(
     `
-      SELECT id, user_id, source, title, link, pub_date, status, raw_text, cleaned_text, images, template_one, template_two, template_three, template_generated_at, news_content_video_id, error, created_at, finished_at
+      SELECT id, user_id, source, title, link, pub_date, status, raw_text, cleaned_text, images, template_image_items, template_one, template_two, template_three, template_pages, template_music_selection, template_generated_at, preview_render_state, platform_post_state, platform_schedule_state, news_content_video_id, error, created_at, finished_at
       FROM news_rss_items
       WHERE ${filters.join(" AND ")}
       ORDER BY created_at DESC
@@ -185,7 +188,37 @@ async function getRssByLink({ link }) {
   return res.rows?.[0] || null;
 }
 
-async function markProcessedById({ id, status, rawText, cleanedText, images, templateOne, templateTwo, templateThree, error }) {
+async function getRssById({ id }) {
+  await ensureSchema();
+  const db = getPool();
+  const res = await db.query(
+    `
+      SELECT *
+      FROM news_rss_items
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [Number(id)]
+  );
+  return res.rows?.[0] || null;
+}
+
+async function listRssItemsWithSchedules() {
+  await ensureSchema();
+  const db = getPool();
+  const res = await db.query(
+    `
+      SELECT *
+      FROM news_rss_items
+      WHERE platform_schedule_state IS NOT NULL
+        AND jsonb_typeof(platform_schedule_state) = 'object'
+      ORDER BY updated_at ASC
+    `
+  );
+  return res.rows || [];
+}
+
+async function markProcessedById({ id, status, rawText, cleanedText, images, templateOne, templateTwo, templateThree, templatePages, templateMusicSelection, error }) {
   await ensureSchema();
   const db = getPool();
   await db.query(
@@ -198,8 +231,10 @@ async function markProcessedById({ id, status, rawText, cleanedText, images, tem
           template_one = $6::jsonb,
           template_two = $7::jsonb,
           template_three = $8::jsonb,
-          template_generated_at = CASE WHEN $6::jsonb IS NOT NULL OR $7::jsonb IS NOT NULL OR $8::jsonb IS NOT NULL THEN NOW() ELSE template_generated_at END,
-          error = $9,
+          template_pages = $9::jsonb,
+          template_music_selection = $10::jsonb,
+          template_generated_at = CASE WHEN $6::jsonb IS NOT NULL OR $7::jsonb IS NOT NULL OR $8::jsonb IS NOT NULL OR $9::jsonb IS NOT NULL OR $10::jsonb IS NOT NULL THEN NOW() ELSE template_generated_at END,
+          error = $11,
           finished_at = NOW()
       WHERE id = $1
     `,
@@ -212,9 +247,68 @@ async function markProcessedById({ id, status, rawText, cleanedText, images, tem
       templateOne ? JSON.stringify(templateOne) : null,
       templateTwo ? JSON.stringify(templateTwo) : null,
       templateThree ? JSON.stringify(templateThree) : null,
+      templatePages ? JSON.stringify(templatePages) : null,
+      templateMusicSelection ? JSON.stringify(templateMusicSelection) : null,
       error ? String(error) : null,
     ]
   );
+}
+
+async function updateRssItemDraft({
+  id,
+  images,
+  templateImageItems,
+  cleanedText,
+  templateOne,
+  templateTwo,
+  templateThree,
+  templatePages,
+  templateMusicSelection,
+  previewRenderState,
+  platformPostState,
+  platformScheduleState,
+}) {
+  await ensureSchema();
+  const db = getPool();
+  const res = await db.query(
+      `
+      UPDATE news_rss_items
+      SET images = COALESCE($2::jsonb, images),
+          template_image_items = COALESCE($3::jsonb, template_image_items),
+          cleaned_text = COALESCE($4, cleaned_text),
+          template_one = COALESCE($5::jsonb, template_one),
+          template_two = COALESCE($6::jsonb, template_two),
+          template_three = COALESCE($7::jsonb, template_three),
+          template_pages = COALESCE($8::jsonb, template_pages),
+          template_music_selection = COALESCE($9::jsonb, template_music_selection),
+          preview_render_state = COALESCE($10::jsonb, preview_render_state),
+          platform_post_state = COALESCE($11::jsonb, platform_post_state),
+          platform_schedule_state = COALESCE($12::jsonb, platform_schedule_state),
+          template_generated_at = CASE
+            WHEN $5::jsonb IS NOT NULL OR $6::jsonb IS NOT NULL OR $7::jsonb IS NOT NULL OR $8::jsonb IS NOT NULL OR $9::jsonb IS NOT NULL OR $10::jsonb IS NOT NULL OR $11::jsonb IS NOT NULL OR $12::jsonb IS NOT NULL
+            THEN NOW()
+            ELSE template_generated_at
+          END,
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, images, template_image_items, cleaned_text, template_one, template_two, template_three, template_pages, template_music_selection, preview_render_state, platform_post_state, platform_schedule_state, template_generated_at
+    `,
+    [
+      Number(id),
+      images ? JSON.stringify(images) : null,
+      templateImageItems ? JSON.stringify(templateImageItems) : null,
+      typeof cleanedText === "string" ? cleanedText : null,
+      templateOne ? JSON.stringify(templateOne) : null,
+      templateTwo ? JSON.stringify(templateTwo) : null,
+      templateThree ? JSON.stringify(templateThree) : null,
+      templatePages ? JSON.stringify(templatePages) : null,
+      templateMusicSelection ? JSON.stringify(templateMusicSelection) : null,
+      previewRenderState ? JSON.stringify(previewRenderState) : null,
+      platformPostState ? JSON.stringify(platformPostState) : null,
+      platformScheduleState ? JSON.stringify(platformScheduleState) : null,
+    ]
+  );
+  return res.rows?.[0] || null;
 }
 
 async function linkVideoById({ id, videoId }) {

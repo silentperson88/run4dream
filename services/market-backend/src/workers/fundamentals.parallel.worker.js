@@ -45,6 +45,7 @@ const runtime = {
   symbol: readArg("symbol"),
   mode: (readArg("mode") || "pending").toLowerCase(),
   once: hasFlag("once", "single", "test"),
+  force: hasFlag("force", "override"),
   concurrency: Math.max(1, Number(readArg("concurrency") || FAST_CONCURRENCY)),
   waitUntil: (readArg("wait-until") || "domcontentloaded").toLowerCase(),
 };
@@ -108,8 +109,8 @@ const fetchCandidatesFromDb = async (_mode = "pending", limit = CANDIDATE_LIMIT)
   const masters = await stockMasterService.getAllMasterStocks();
   const candidates = masters.filter(
     (m) =>
-      stockMasterService.canFetchScreener(m) &&
-      !processedMasterIds.has(String(m.id)),
+      !processedMasterIds.has(String(m.id)) &&
+      (runtime.force ? m?.is_active === true : stockMasterService.canFetchScreener(m)),
   );
 
   const activeStocks = await activeStockService.getActiveStocksByMasterIds(
@@ -153,7 +154,7 @@ const fetchSingleCandidate = async () => {
     );
   }
 
-  if (!stockMasterService.canFetchScreener(master)) {
+  if (!runtime.force && !stockMasterService.canFetchScreener(master)) {
     if (!master?.is_active) {
       throw new Error("Inactive stock cannot be fetched");
     }

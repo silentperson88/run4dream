@@ -213,6 +213,89 @@ async function ensureSchema() {
 
     await db.query(
       `
+        CREATE TABLE IF NOT EXISTS music_library_categories (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL DEFAULT 0,
+          category_name TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (user_id, category_name)
+        );
+      `,
+    );
+    await db.query(
+      "CREATE INDEX IF NOT EXISTS idx_music_library_categories_user_id ON music_library_categories(user_id, category_name);",
+    );
+    await db.query(
+      `
+        CREATE TABLE IF NOT EXISTS music_library_tracks (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL,
+          title TEXT NOT NULL,
+          media_type TEXT NOT NULL DEFAULT 'music',
+          file_name TEXT NOT NULL UNIQUE,
+          original_file_name TEXT,
+          file_url TEXT NOT NULL,
+          mime_type TEXT,
+          duration_seconds NUMERIC,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `,
+    );
+    await db.query(
+      "CREATE INDEX IF NOT EXISTS idx_music_library_tracks_user_id ON music_library_tracks(user_id, created_at DESC);",
+    );
+    await db.query("ALTER TABLE music_library_tracks ADD COLUMN IF NOT EXISTS media_type TEXT NOT NULL DEFAULT 'music';");
+    await db.query(
+      `
+        CREATE TABLE IF NOT EXISTS music_library_track_categories (
+          track_id BIGINT NOT NULL REFERENCES music_library_tracks(id) ON DELETE CASCADE,
+          category_id BIGINT NOT NULL REFERENCES music_library_categories(id) ON DELETE CASCADE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (track_id, category_id)
+        );
+      `,
+    );
+    await db.query(
+      "CREATE INDEX IF NOT EXISTS idx_music_library_track_categories_category_id ON music_library_track_categories(category_id);",
+    );
+
+    const defaultMusicCategories = [
+      "sad",
+      "winning moment",
+      "uplifting",
+      "motivational",
+      "emotional",
+      "cinematic",
+      "trending",
+      "news",
+      "sports",
+      "calm",
+      "dramatic",
+      "victory",
+      "romantic",
+      "dark",
+      "energetic",
+      "lofi",
+      "outro",
+      "reveal",
+      "hook",
+      "suspense",
+    ];
+    for (const categoryName of defaultMusicCategories) {
+      await db.query(
+        `
+          INSERT INTO music_library_categories (user_id, category_name)
+          VALUES (0, $1)
+          ON CONFLICT (user_id, category_name) DO NOTHING
+        `,
+        [categoryName],
+      );
+    }
+
+    await db.query(
+      `
         CREATE TABLE IF NOT EXISTS news_rss_items (
           id BIGSERIAL PRIMARY KEY,
           user_id BIGINT NOT NULL,
@@ -224,15 +307,21 @@ async function ensureSchema() {
           raw_text TEXT,
           cleaned_text TEXT,
           images JSONB NOT NULL DEFAULT '[]'::jsonb,
+          template_image_items JSONB,
           template_one JSONB,
           template_two JSONB,
           template_three JSONB,
+          template_pages JSONB,
           template_generated_at TIMESTAMPTZ,
+          preview_render_state JSONB,
+          platform_post_state JSONB,
+          platform_schedule_state JSONB,
           news_content_video_id BIGINT,
           error TEXT,
           attempts INTEGER NOT NULL DEFAULT 0,
           started_at TIMESTAMPTZ,
           finished_at TIMESTAMPTZ,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
       `,
@@ -244,15 +333,22 @@ async function ensureSchema() {
     await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS raw_text TEXT;");
     await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS cleaned_text TEXT;");
     await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS images JSONB NOT NULL DEFAULT '[]'::jsonb;");
+    await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS template_image_items JSONB;");
     await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS template_one JSONB;");
     await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS template_two JSONB;");
     await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS template_three JSONB;");
+    await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS template_pages JSONB;");
+    await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS template_music_selection JSONB;");
     await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS template_generated_at TIMESTAMPTZ;");
+    await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS preview_render_state JSONB;");
+    await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS platform_post_state JSONB;");
+    await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS platform_schedule_state JSONB;");
     await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS news_content_video_id BIGINT;");
     await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS error TEXT;");
     await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;");
     await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;");
     await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;");
+    await db.query("ALTER TABLE news_rss_items ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();");
     await db.query(
       "CREATE INDEX IF NOT EXISTS idx_news_rss_items_status ON news_rss_items(status, created_at DESC);",
     );

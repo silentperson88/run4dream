@@ -1,0 +1,48 @@
+{
+  "templateOne": {
+    "name": "Template One",
+    "layout": "Hero image + compact bottom caption",
+    "titleRule": "Maximum 3 words.",
+    "subtitleRule": "Maximum 100 characters including spaces.",
+    "useCase": "Single-image social post with a strong headline and short supporting line.",
+    "fields": [
+      "title",
+      "subtitle",
+      "shortText",
+      "mediumText",
+      "highlights",
+      "image",
+      "cta"
+    ],
+    "geminiPrompt": "Rewrite the single-card social post in a more punchy, publishable way. Keep the title to a maximum of 3 words. Keep the subtitle to 100 characters or less. Use only facts from the news text. Make it suitable for a single-image social post. No CTA needed."
+  },
+  "templateTwo": {
+    "name": "Template Two",
+    "layout": "News brief with bullets",
+    "titleRule": "Short headline with bullet-friendly structure.",
+    "subtitleRule": "Short supporting line, 2 to 4 bullets preferred.",
+    "useCase": "Quick update or explainer card with concise bullet points.",
+    "fields": [
+      "heading",
+      "bullets",
+      "shortText",
+      "mediumText",
+      "image"
+    ],
+    "geminiPrompt": "Rewrite this card as a concise bullet-based social brief. Keep it factual, short, and easy to scan."
+  },
+  "templateThree": {
+    "name": "Template Three",
+    "layout": "Cover / opener slide",
+    "titleRule": "Short cover title.",
+    "subtitleRule": "Optional subtitle or kicker.",
+    "useCase": "Carousel cover, story opener, or chapter title slide.",
+    "fields": [
+      "title",
+      "subtitle",
+      "kicker",
+      "image"
+    ],
+    "geminiPrompt": "Rewrite this as a clean cover slide. Keep the title short and give it a strong opener feel."
+  }
+}

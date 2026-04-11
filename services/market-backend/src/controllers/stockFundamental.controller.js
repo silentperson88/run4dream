@@ -1,4 +1,10 @@
 const stockFundamentalsService = require("../services/stockFundamental.service");
+const dividendAnalysisService = require("../services/dividendAnalysis.service");
+const growthAnalysisService = require("../services/growthAnalysis.service");
+const garpAnalysisService = require("../services/garpAnalysis.service");
+const valueAnalysisService = require("../services/valueAnalysis.service");
+const pivotAnalysisService = require("../services/pivotAnalysis.service");
+const stockSearchService = require("../services/stockSearch.service");
 const stockMasterService = require("../services/stockMaster.service");
 const activeStockService = require("../services/activestock.service");
 const fs = require("fs/promises");
@@ -124,6 +130,44 @@ const buildProfitLossOtherCatalog = (otherTables) => {
       row_shapes: Array.from(rowShapes).sort(),
     };
   });
+};
+
+const buildOverviewFundamentalsPayload = async (masterStock) => {
+  const overviewRow = await stockFundamentalsService.getOverviewFundamentalsByMasterId(masterStock.id);
+  if (!overviewRow) return null;
+
+  const technicals = await stockTechnicalService.getMomentumSnapshotByMasterId(masterStock.id).catch(() => null);
+
+  return {
+    master_id: String(masterStock.id),
+    active_stock_id: overviewRow.active_stock_id ? String(overviewRow.active_stock_id) : null,
+    company: overviewRow.company_name || masterStock.name || null,
+    company_info: {
+      company_name: overviewRow.company_name || masterStock.name || null,
+      about: overviewRow.about || null,
+      key_points: overviewRow.key_points || null,
+      links: Array.isArray(overviewRow.links) ? overviewRow.links : [],
+    },
+    summary: {
+      market_snapshot: {
+        market_cap: overviewRow.market_cap,
+        current_price: overviewRow.current_price,
+        high_low: overviewRow.high_low,
+        stock_pe: overviewRow.stock_pe,
+        pe_ratio: overviewRow.stock_pe,
+        book_value: overviewRow.book_value,
+        dividend_yield: overviewRow.dividend_yield,
+        roce: overviewRow.roce,
+        roe: overviewRow.roe,
+        face_value: overviewRow.face_value,
+      },
+      pros: Array.isArray(overviewRow.pros) ? overviewRow.pros : [],
+      cons: Array.isArray(overviewRow.cons) ? overviewRow.cons : [],
+    },
+    documents: {},
+    technicals,
+    last_updated_at: overviewRow.last_updated_at || masterStock.updated_at || new Date().toISOString(),
+  };
 };
 
 const writeFundamentalsTableRowCatalog = async (masterStock, data) => {
@@ -298,6 +342,342 @@ exports.getStockFundamentalsBySymbol = async (req, res) => {
     return response(res, 200, responseUtils.SUCCESS, {
       ...data,
       technicals: momentumResult.status === "fulfilled" ? momentumResult.value : null,
+    });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getOverviewStockFundamentalsBySymbol = async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const master = await stockMasterService.getMasterStockBySymbol(symbol);
+    if (!master) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
+
+    const data = await buildOverviewFundamentalsPayload(master);
+    if (!data) {
+      return response(res, 400, responseUtils.FAILED_TO_FETCH_STOCK_FUNDAMENTALS);
+    }
+
+    return response(res, 200, responseUtils.SUCCESS, data);
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getQuarterlyStockFundamentalsBySymbol = async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const master = await stockMasterService.getMasterStockBySymbol(symbol);
+    if (!master) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
+
+    const rows = await stockFundamentalsService.getQuarterlyFundamentalsBySymbol(symbol);
+    return response(res, 200, responseUtils.SUCCESS, {
+      symbol: master.symbol || symbol,
+      company_name: master.name || null,
+      master_id: String(master.id),
+      active_stock_id: rows?.[0]?.active_stock_id ? String(rows[0].active_stock_id) : null,
+      rows: Array.isArray(rows) ? rows : [],
+    });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+const buildSplitSectionResponse = async (symbol, section) => {
+  const master = await stockMasterService.getMasterStockBySymbol(symbol);
+  if (!master) return { status: 400, body: responseUtils.STOCK_NOT_FOUND };
+
+  const getterMap = {
+    profit_loss: stockFundamentalsService.getProfitLossFundamentalsBySymbol,
+    balance_sheet: stockFundamentalsService.getBalanceSheetFundamentalsBySymbol,
+    cash_flow: stockFundamentalsService.getCashFlowFundamentalsBySymbol,
+    ratios: stockFundamentalsService.getRatiosFundamentalsBySymbol,
+    shareholdings: stockFundamentalsService.getShareholdingFundamentalsBySymbol,
+  };
+
+  const rows = await getterMap[section](symbol);
+  return {
+    status: 200,
+    body: responseUtils.SUCCESS,
+    data: {
+      symbol: master.symbol || symbol,
+      company_name: master.name || null,
+      master_id: String(master.id),
+      active_stock_id: rows?.[0]?.active_stock_id ? String(rows[0].active_stock_id) : null,
+      rows: Array.isArray(rows) ? rows : [],
+    },
+  };
+};
+
+exports.getProfitLossStockFundamentalsBySymbol = async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const result = await buildSplitSectionResponse(symbol, "profit_loss");
+    if (result.status !== 200) return response(res, result.status, result.body);
+    return response(res, 200, result.body, result.data);
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getBalanceSheetStockFundamentalsBySymbol = async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const result = await buildSplitSectionResponse(symbol, "balance_sheet");
+    if (result.status !== 200) return response(res, result.status, result.body);
+    return response(res, 200, result.body, result.data);
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getCashFlowStockFundamentalsBySymbol = async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const result = await buildSplitSectionResponse(symbol, "cash_flow");
+    if (result.status !== 200) return response(res, result.status, result.body);
+    return response(res, 200, result.body, result.data);
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getRatiosStockFundamentalsBySymbol = async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const result = await buildSplitSectionResponse(symbol, "ratios");
+    if (result.status !== 200) return response(res, result.status, result.body);
+    return response(res, 200, result.body, result.data);
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getShareholdingStockFundamentalsBySymbol = async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const result = await buildSplitSectionResponse(symbol, "shareholdings");
+    if (result.status !== 200) return response(res, result.status, result.body);
+    return response(res, 200, result.body, result.data);
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getDividendAnalysis = async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query?.limit || 120)));
+    const rows = await dividendAnalysisService.getDividendAnalysisRows({});
+    const ranked = rows.map((row) => {
+      const analysis = dividendAnalysisService.scoreDividendCandidate(row);
+      return {
+        ...row,
+        analysis,
+      };
+    }).sort((a, b) => {
+      const scoreDiff = Number(b?.analysis?.score || 0) - Number(a?.analysis?.score || 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      const yieldDiff = Number(b?.analysis?.metrics?.dividend_yield || 0) - Number(a?.analysis?.metrics?.dividend_yield || 0);
+      if (yieldDiff !== 0) return yieldDiff;
+      return String(a?.symbol || "").localeCompare(String(b?.symbol || ""));
+    }).slice(0, limit);
+
+    return response(res, 200, responseUtils.SUCCESS, {
+      limit,
+      total: ranked.length,
+      rows: ranked,
+    });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getDividendAnalysisBySymbol = async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const row = await dividendAnalysisService.getDividendAnalysisBySymbol(symbol);
+    if (!row) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
+
+    return response(res, 200, responseUtils.SUCCESS, {
+      ...row,
+      analysis: dividendAnalysisService.scoreDividendCandidate(row),
+    });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getGrowthAnalysis = async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query?.limit || 120)));
+    const rows = await growthAnalysisService.getGrowthAnalysisRows({ limit });
+    const ranked = rows
+      .map((row) => ({
+        ...row,
+        analysis: growthAnalysisService.scoreGrowthCandidate(row),
+      }))
+      .sort((a, b) => {
+        const scoreDiff = Number(b?.analysis?.score || 0) - Number(a?.analysis?.score || 0);
+        if (scoreDiff !== 0) return scoreDiff;
+        const profitDiff =
+          Number(b?.analysis?.metrics?.profit_cagr_5y || 0) - Number(a?.analysis?.metrics?.profit_cagr_5y || 0);
+        if (profitDiff !== 0) return profitDiff;
+        return String(a?.symbol || "").localeCompare(String(b?.symbol || ""));
+      });
+
+    return response(res, 200, responseUtils.SUCCESS, {
+      limit,
+      total: ranked.length,
+      rows: ranked,
+    });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getGrowthAnalysisBySymbol = async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const row = await growthAnalysisService.getGrowthAnalysisBySymbol(symbol);
+    if (!row) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
+
+    return response(res, 200, responseUtils.SUCCESS, {
+      ...row,
+      analysis: growthAnalysisService.scoreGrowthCandidate(row),
+    });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getGarpAnalysis = async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query?.limit || 50)));
+    const grade = String(req.query?.grade || "ALL");
+    const minScore = req.query?.minScore !== undefined && req.query?.minScore !== null && req.query?.minScore !== ""
+      ? Number(req.query?.minScore)
+      : null;
+    const buckets = await garpAnalysisService.getGarpAnalysisBuckets({ limit, grade, minScore });
+    return response(res, 200, responseUtils.SUCCESS, {
+      total: buckets.total,
+      rows: buckets.overallRows,
+      buckets: buckets.tierRows,
+      filters: {
+        limit,
+        grade: grade || "ALL",
+        minScore,
+      },
+    });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getGarpAnalysisBySymbol = async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const row = await garpAnalysisService.getGarpAnalysisBySymbol(symbol);
+    if (!row) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
+
+    return response(res, 200, responseUtils.SUCCESS, {
+      ...row,
+    });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getValueAnalysis = async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query?.limit || 50)));
+    const grade = String(req.query?.grade || "ALL");
+    const minScore = req.query?.minScore !== undefined && req.query?.minScore !== null && req.query?.minScore !== ""
+      ? Number(req.query?.minScore)
+      : null;
+    const buckets = await valueAnalysisService.getValueAnalysisBuckets({ limit, grade, minScore });
+    return response(res, 200, responseUtils.SUCCESS, {
+      total: buckets.total,
+      rows: buckets.overallRows,
+      buckets: buckets.tierRows,
+      filters: { limit, grade: grade || "ALL", minScore },
+    });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getValueAnalysisBySymbol = async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const row = await valueAnalysisService.getValueAnalysisBySymbol(symbol);
+    if (!row) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
+
+    return response(res, 200, responseUtils.SUCCESS, { ...row });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getPivotAnalysis = async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query?.limit || 50)));
+    const grade = String(req.query?.grade || "ALL");
+    const minScore =
+      req.query?.minScore !== undefined && req.query?.minScore !== null && req.query?.minScore !== ""
+        ? Number(req.query?.minScore)
+        : null;
+    const includeRejected = String(req.query?.includeRejected || "false").toLowerCase() === "true";
+    const buckets = await pivotAnalysisService.getPivotAnalysisBuckets({ limit, grade, minScore, includeRejected });
+    return response(res, 200, responseUtils.SUCCESS, {
+      total: buckets.total,
+      rows: buckets.overallRows,
+      buckets: buckets.tierRows,
+      summary: buckets.summary,
+      filters: { limit, grade: grade || "ALL", minScore, includeRejected },
+    });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getPivotAnalysisBySymbol = async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const row = await pivotAnalysisService.getPivotAnalysisBySymbol(symbol);
+    if (!row) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
+
+    return response(res, 200, responseUtils.SUCCESS, { ...row });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.getStockSearchSuggestions = async (req, res) => {
+  try {
+    const query = String(req.query?.q || "").trim();
+    const suggestions = stockSearchService.suggestSearchFields(query);
+    return response(res, 200, responseUtils.SUCCESS, {
+      query,
+      suggestions,
+      total: suggestions.length,
+    });
+  } catch (error) {
+    return response(res, 500, responseUtils.SERVER_ERROR, error);
+  }
+};
+
+exports.searchStocks = async (req, res) => {
+  try {
+    const query = String(req.query?.q || "").trim();
+    const limit = Math.max(1, Math.min(100, Number(req.query?.limit || 50)));
+    const result = await stockSearchService.searchStocks({ query, limit });
+    return response(res, 200, responseUtils.SUCCESS, {
+      ...result,
+      filters: {
+        query,
+        limit,
+      },
     });
   } catch (error) {
     return response(res, 500, responseUtils.SERVER_ERROR, error);
