@@ -1,7 +1,7 @@
 const { analyzeScreenerHtmlRendered } = require("./screenerHtmlRendered.service");
 const { buildMappedFundamentals } = require("./fundamentalsMapper.service");
 
-const PRIMARY_FIELD_KEYS = ["market_cap", "current_price", "book_value"];
+const PRIMARY_FIELD_KEYS = ["market_cap", "current_price"];
 
 const normalizeScreenerUrl = (value) => String(value || "").trim().replace(/\/+$/g, "/");
 
@@ -77,10 +77,6 @@ const validatePrimarySnapshot = (snapshot = {}) => {
   if (!isValidPrimaryNumber(snapshot.current_price)) {
     failedFields.push("current_price");
   }
-  if (snapshot.book_value === null || snapshot.book_value === undefined) {
-    failedFields.push("book_value");
-  }
-
   return {
     valid: failedFields.length === 0,
     failedFields,
