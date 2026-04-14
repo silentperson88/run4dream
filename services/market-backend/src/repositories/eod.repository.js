@@ -92,6 +92,23 @@ const getLatestTradeDateByMasterId = async (masterId, db = pool) => {
   return rows[0]?.latest_trade_date || null;
 };
 
+const getLatestTradeDatesByMasterIds = async (masterIds = [], db = pool) => {
+  const ids = Array.from(new Set(masterIds.map(Number).filter((n) => Number.isFinite(n) && n > 0)));
+  if (!ids.length) return new Map();
+
+  const { rows } = await db.query(
+    `
+      SELECT master_id, MAX(trade_date)::date AS latest_trade_date
+      FROM eod
+      WHERE master_id = ANY($1::bigint[])
+      GROUP BY master_id
+    `,
+    [ids],
+  );
+
+  return new Map(rows.map((row) => [Number(row.master_id), row.latest_trade_date || null]));
+};
+
 const listDailyCandlesByMasterIdRange = async (
   { master_id, fromDate, toDate, limit = 5000 } = {},
   db = pool,
@@ -141,6 +158,7 @@ module.exports = {
   normalizeSymbol,
   upsertDailyCandle,
   getLatestTradeDateByMasterId,
+  getLatestTradeDatesByMasterIds,
   listDailyCandlesByMasterIdRange,
   upsertMonthlyCandle: upsertDailyCandle,
 };

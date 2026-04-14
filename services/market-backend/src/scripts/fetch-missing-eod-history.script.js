@@ -3,7 +3,7 @@ const {
   fetchEodByMasterIdRangeChunked,
 } = require("../services/stockOhlcEod.service");
 const masterService = require("../services/stockMaster.service");
-const { getAllActiveStocks } = require("../services/activestock.service");
+const eodRepo = require("../repositories/eod.repository");
 
 const DELAY_MS = Number(process.env.EOD_HISTORY_DELAY_MS || 20_000);
 const FROM_DATE = process.env.EOD_HISTORY_FROM_DATE || "2007-01-01";
@@ -13,16 +13,15 @@ const TO_DATE =
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function getMissingHistoryStocks(rows = []) {
-  const out = rows.filter(
-    (row) =>
-      !row?.hasHistoryData ||
-      !row?.historyDataFromDate ||
-      !row?.historyDataToDate,
-  );
+  const out = rows.filter((row) => {
+    const latestDate = String(row?.latestTradeDate || "").trim();
+    if (!latestDate) return true;
+    return latestDate < TO_DATE;
+  });
 
   const dedup = new Map();
   for (const row of out) {
-    const id = Number(row?.master_id);
+    const id = Number(row?.master_id || row?.id);
     if (!Number.isFinite(id) || id <= 0) continue;
     if (!dedup.has(id)) dedup.set(id, row);
   }
@@ -34,6 +33,16 @@ async function fetchHistoryForStock(masterId) {
   const master = await masterService.getMasterStockById(masterId);
   if (!master) {
     throw new Error(`Invalid master_id: ${masterId}`);
+  }
+
+  if (
+    !master.is_active ||
+    String(master.angelone_fetch_status || "").toLowerCase() !== "fetched" ||
+    String(master.screener_status || "").toUpperCase() !== "VALID"
+  ) {
+    throw new Error(
+      `Stock is not eligible for EOD history fetch (requires active + angelone fetched + screener VALID)`,
+    );
   }
 
   const result = await fetchEodByMasterIdRangeChunked({
@@ -75,11 +84,30 @@ async function run() {
     `Starting missing EOD history fetch (direct service mode). fromDate=${FROM_DATE}, toDate=${TO_DATE}, delayMs=${DELAY_MS}`,
   );
 
-  const activeStocks = await getAllActiveStocks();
-  console.log(`Total active stocks fetched: ${activeStocks.length}`);
+  const masterStocks = await masterService.getAllMasterStocks();
+  console.log(`Total master stocks fetched: ${masterStocks.length}`);
 
-  const targets = getMissingHistoryStocks(activeStocks);
-  console.log(`Active stocks with missing history: ${targets.length}`);
+  const eligibleStocks = masterStocks.filter((row) => {
+    return (
+      Boolean(row?.is_active) &&
+      String(row?.angelone_fetch_status || "").toLowerCase() === "fetched" &&
+      String(row?.screener_status || "").toUpperCase() === "VALID"
+    );
+  });
+  console.log(`Eligible stocks (master active + angelone fetched + VALID): ${eligibleStocks.length}`);
+
+  const latestByMasterId = await eodRepo.getLatestTradeDatesByMasterIds(
+    eligibleStocks.map((row) => row.id),
+  );
+
+  const targets = getMissingHistoryStocks(
+    eligibleStocks.map((row) => ({
+      ...row,
+      master_id: row.id,
+      latestTradeDate: latestByMasterId.get(Number(row.id)) || null,
+    })),
+  );
+  console.log(`Eligible stocks with missing EOD history: ${targets.length}`);
 
   if (!targets.length) {
     console.log("No stocks require history fetch.");

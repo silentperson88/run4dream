@@ -236,6 +236,17 @@ const updateHistoryCoverage = async (
   } = {},
   db = pool,
 ) => {
+  const current = await getById(id, db);
+  const currentFrom = current?.historyDataFromDate ? new Date(current.historyDataFromDate) : null;
+  const currentTo = current?.historyDataToDate ? new Date(current.historyDataToDate) : null;
+  const newFrom = actualFromDate ? new Date(actualFromDate) : null;
+  const newTo = actualToDate ? new Date(actualToDate) : null;
+
+  const mergedFrom =
+    currentFrom && newFrom ? (currentFrom < newFrom ? currentFrom : newFrom) : currentFrom || newFrom;
+  const mergedTo =
+    currentTo && newTo ? (currentTo > newTo ? currentTo : newTo) : currentTo || newTo;
+
   const { rows } = await db.query(
     `
       UPDATE stock_master
@@ -250,7 +261,7 @@ const updateHistoryCoverage = async (
       WHERE id = $1
       RETURNING *
     `,
-    [Number(id), actualFromDate, actualToDate],
+    [Number(id), mergedFrom, mergedTo],
   );
 
   return rows[0] ? normalizeMaster(rows[0]) : null;
