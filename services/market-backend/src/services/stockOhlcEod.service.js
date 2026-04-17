@@ -23,6 +23,17 @@ async function createEodForAllStocks(eodData = []) {
   };
 }
 
+function safeNormalizeEodDate(timestamp) {
+  if (!timestamp) return null;
+  try {
+    const date = normalizeEodDate(timestamp);
+    if (!date || Number.isNaN(date.getTime())) return null;
+    return date;
+  } catch (error) {
+    return null;
+  }
+}
+
 async function fetchEodByMasterIdRange({
   master_id,
   symboltoken,
@@ -55,11 +66,15 @@ async function fetchEodByMasterIdRange({
   }
 
   const savedCandles = [];
+  let skippedCandles = 0;
 
   for (const candle of response.data) {
     const [timestamp, open, high, low, close, volume] = candle;
-
-    const date = normalizeEodDate(timestamp);
+    const date = safeNormalizeEodDate(timestamp);
+    if (!date) {
+      skippedCandles += 1;
+      continue;
+    }
 
     const doc = {
       master_id,
@@ -81,11 +96,21 @@ async function fetchEodByMasterIdRange({
     await createEodForAllStocks(savedCandles);
   }
 
+  if (skippedCandles) {
+    console.warn(
+      `Skipped ${skippedCandles} invalid EOD candles for master_id=${master_id}, symbol=${symbol}`,
+    );
+  }
+
   return savedCandles;
 }
 
 function toIsoDateOnly(date) {
-  return new Date(date).toISOString().slice(0, 10);
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new RangeError(`Invalid date value for toIsoDateOnly: ${date}`);
+  }
+  return parsed.toISOString().slice(0, 10);
 }
 
 function addDays(date, days) {
@@ -142,7 +167,8 @@ async function fetchEodByMasterIdRangeChunked({
   let effectiveFrom = fromDate;
 
   if (latestStoredDate) {
-    const nextMissingDate = addDays(new Date(`${latestStoredDate}T00:00:00.000Z`), 1);
+    const latestStoredDateIso = toIsoDateOnly(latestStoredDate);
+    const nextMissingDate = addDays(new Date(`${latestStoredDateIso}T00:00:00.000Z`), 1);
     const nextMissingDateIso = toIsoDateOnly(nextMissingDate);
     if (nextMissingDateIso > effectiveFrom) {
       effectiveFrom = nextMissingDateIso;
@@ -183,9 +209,14 @@ async function fetchEodByMasterIdRangeChunked({
     }
 
     const chunkCandles = [];
+    let skippedCandles = 0;
     for (const candle of response.data) {
       const [timestamp, open, high, low, close, volume] = candle;
-      const date = normalizeEodDate(timestamp);
+      const date = safeNormalizeEodDate(timestamp);
+      if (!date) {
+        skippedCandles += 1;
+        continue;
+      }
       chunkCandles.push({
         master_id,
         symbol,
@@ -203,6 +234,12 @@ async function fetchEodByMasterIdRangeChunked({
     if (chunkCandles.length) {
       await createEodForAllStocks(chunkCandles);
       savedCandles.push(...chunkCandles);
+    }
+
+    if (skippedCandles) {
+      console.warn(
+        `Skipped ${skippedCandles} invalid EOD candles for master_id=${master_id}, symbol=${symbol}, chunk=${range.fromDate}..${range.toDate}`,
+      );
     }
 
     chunks.push({

@@ -26,9 +26,16 @@ const normalizeMaster = (row = {}) => ({
   ...row,
   screener_status: row.screener_status || "PENDING",
   angelone_fetch_status: row.angelone_fetch_status || "not_attempted",
+  eod_history_status: row.eod_history_status || null,
   security_code: row.security_code,
   ...parseHistoryRange(row.history_range),
 });
+
+const safeDateOrNull = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
 
 const create = async (payload, db = pool) => {
   const params = [
@@ -42,6 +49,7 @@ const create = async (payload, db = pool) => {
     payload.raw_stock_id ?? payload.rawStockId ?? null,
     String(payload.security_code ?? payload.securityCode ?? "").trim() || null,
     payload.history_range ?? null,
+    payload.eod_history_status ?? null,
   ];
 
   const insertMaster = async () => {
@@ -50,9 +58,9 @@ const create = async (payload, db = pool) => {
       `
         INSERT INTO stock_master (
           symbol, exchange, name, screener_url,
-          screener_status, is_active, token, raw_stock_id, security_code, history_range
+          screener_status, is_active, token, raw_stock_id, security_code, history_range, eod_history_status
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
         RETURNING *
       `,
       params,
@@ -237,15 +245,16 @@ const updateHistoryCoverage = async (
   db = pool,
 ) => {
   const current = await getById(id, db);
-  const currentFrom = current?.historyDataFromDate ? new Date(current.historyDataFromDate) : null;
-  const currentTo = current?.historyDataToDate ? new Date(current.historyDataToDate) : null;
-  const newFrom = actualFromDate ? new Date(actualFromDate) : null;
-  const newTo = actualToDate ? new Date(actualToDate) : null;
+  const currentFrom = safeDateOrNull(current?.historyDataFromDate);
+  const currentTo = safeDateOrNull(current?.historyDataToDate);
+  const newFrom = safeDateOrNull(actualFromDate);
+  const newTo = safeDateOrNull(actualToDate);
 
   const mergedFrom =
     currentFrom && newFrom ? (currentFrom < newFrom ? currentFrom : newFrom) : currentFrom || newFrom;
   const mergedTo =
     currentTo && newTo ? (currentTo > newTo ? currentTo : newTo) : currentTo || newTo;
+  const eodHistoryStatus = mergedFrom || mergedTo ? "HAS_EOD_DATA" : "NO_EOD_DATA";
 
   const { rows } = await db.query(
     `
@@ -257,11 +266,12 @@ const updateHistoryCoverage = async (
           WHEN $3::date IS NULL THEN to_char($2::date, 'YYYY-MM-DD')
           ELSE to_char($2::date, 'YYYY-MM-DD') || ' to ' || to_char($3::date, 'YYYY-MM-DD')
         END,
+        eod_history_status = $4,
         updated_at = NOW()
       WHERE id = $1
       RETURNING *
     `,
-    [Number(id), mergedFrom, mergedTo],
+    [Number(id), mergedFrom, mergedTo, eodHistoryStatus],
   );
 
   return rows[0] ? normalizeMaster(rows[0]) : null;
