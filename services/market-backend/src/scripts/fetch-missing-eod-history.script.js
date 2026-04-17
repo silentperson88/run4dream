@@ -6,9 +6,13 @@ const masterService = require("../services/stockMaster.service");
 const eodRepo = require("../repositories/eod.repository");
 
 const DELAY_MS = Number(process.env.EOD_HISTORY_DELAY_MS || 20_000);
+const CLI_ARGS = process.argv.slice(2);
+const HAS_TODAY_FLAG = CLI_ARGS.includes("--today");
 const FROM_DATE = process.env.EOD_HISTORY_FROM_DATE || "2007-01-01";
-const TO_DATE =
-  process.env.EOD_HISTORY_TO_DATE || new Date().toISOString().slice(0, 10);
+const TODAY_ISO = new Date().toISOString().slice(0, 10);
+const TO_DATE = HAS_TODAY_FLAG
+  ? TODAY_ISO
+  : process.env.EOD_HISTORY_TO_DATE || TODAY_ISO;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -81,7 +85,7 @@ async function fetchHistoryForStock(masterId) {
 
 async function run() {
   console.log(
-    `Starting missing EOD history fetch (direct service mode). fromDate=${FROM_DATE}, toDate=${TO_DATE}, delayMs=${DELAY_MS}`,
+    `Starting missing EOD history fetch (direct service mode). fromDate=${FROM_DATE}, toDate=${TO_DATE}, delayMs=${DELAY_MS}, useToday=${HAS_TODAY_FLAG}`,
   );
 
   const masterStocks = await masterService.getAllMasterStocks();

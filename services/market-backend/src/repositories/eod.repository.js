@@ -109,6 +109,54 @@ const getLatestTradeDatesByMasterIds = async (masterIds = [], db = pool) => {
   return new Map(rows.map((row) => [Number(row.master_id), row.latest_trade_date || null]));
 };
 
+const listRecentCandlesByMasterIds = async (
+  masterIds = [],
+  { limitPerMaster = 260 } = {},
+  db = pool,
+) => {
+  const ids = Array.from(new Set(masterIds.map(Number).filter((n) => Number.isFinite(n) && n > 0)));
+  if (!ids.length) return [];
+
+  const safeLimit = Math.max(1, Math.min(1000, Number(limitPerMaster) || 260));
+  const { rows } = await db.query(
+    `
+      WITH ranked AS (
+        SELECT
+          master_id,
+          symbol,
+          exchange,
+          trade_date,
+          open,
+          high,
+          low,
+          close,
+          volume,
+          source,
+          ROW_NUMBER() OVER (PARTITION BY master_id ORDER BY trade_date DESC) AS rn
+        FROM eod
+        WHERE master_id = ANY($1::bigint[])
+      )
+      SELECT
+        master_id,
+        symbol,
+        exchange,
+        trade_date,
+        open,
+        high,
+        low,
+        close,
+        volume,
+        source
+      FROM ranked
+      WHERE rn <= $2
+      ORDER BY master_id ASC, trade_date ASC
+    `,
+    [ids, safeLimit],
+  );
+
+  return rows.map(normalizeEod);
+};
+
 const listDailyCandlesByMasterIdRange = async (
   { master_id, fromDate, toDate, limit = 5000 } = {},
   db = pool,
@@ -159,6 +207,7 @@ module.exports = {
   upsertDailyCandle,
   getLatestTradeDateByMasterId,
   getLatestTradeDatesByMasterIds,
+  listRecentCandlesByMasterIds,
   listDailyCandlesByMasterIdRange,
   upsertMonthlyCandle: upsertDailyCandle,
 };

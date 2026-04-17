@@ -684,9 +684,12 @@ const buildValueAnalysisRows = async ({ tier1Only = true } = {}, db = pool) => {
       latest_diis: diis,
       roe_percent: roe,
       roce_percent: roce,
+      profit_loss_history: profitHistory,
       sales_history: revenueHistory,
       profit_history: profitHistoryValues,
+      cash_flow_history: cashHistory,
       cash_history: cashOcfHistory,
+      balance_history: balanceHistory,
       ratio_history: ratioHistory,
       shareholding_history: shareHistory,
       value_metrics: {
