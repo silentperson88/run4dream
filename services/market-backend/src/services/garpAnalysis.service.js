@@ -1,4 +1,5 @@
 const { pool } = require("../config/db");
+const { filterRowsByAsOfDate } = require("../utils/asOfDate.utils");
 
 const toNumber = (value) => {
   if (value === null || value === undefined || value === "") return null;
@@ -245,7 +246,7 @@ const scoreBand = (value, bands) => {
   return { score: 0, reason: "Weak" };
 };
 
-const buildGarpAnalysisRows = async (db = pool) => {
+const buildGarpAnalysisRows = async (asOfDate = null, db = pool) => {
   try {
   if (!(await tableExists("stock_fundamental_overview", db))) return [];
 
@@ -334,11 +335,11 @@ const buildGarpAnalysisRows = async (db = pool) => {
       : [],
   ]);
 
-  const ratiosByMaster = groupRowsByMasterId(ratiosRows);
-  const profitByMaster = groupRowsByMasterId(profitRows);
-  const cashByMaster = groupRowsByMasterId(cashRows);
-  const balanceByMaster = groupRowsByMasterId(balanceRows);
-  const shareByMaster = groupRowsByMasterId(shareRows);
+  const ratiosByMaster = groupRowsByMasterId(filterRowsByAsOfDate(ratiosRows, asOfDate));
+  const profitByMaster = groupRowsByMasterId(filterRowsByAsOfDate(profitRows, asOfDate));
+  const cashByMaster = groupRowsByMasterId(filterRowsByAsOfDate(cashRows, asOfDate));
+  const balanceByMaster = groupRowsByMasterId(filterRowsByAsOfDate(balanceRows, asOfDate));
+  const shareByMaster = groupRowsByMasterId(filterRowsByAsOfDate(shareRows, asOfDate));
 
   return overviewRows.map((row) => {
     const masterId = String(row.master_id);
@@ -745,18 +746,22 @@ const buildGarpAnalysisRows = async (db = pool) => {
   }
 };
 
-const getGarpAnalysisRows = async ({ limit = 20, grade = "ALL", minScore = null } = {}, db = pool) => {
-  const rows = (await buildGarpAnalysisRows(db)).filter(Boolean).filter((row) => matchesGradeFilter(row, grade) && matchesScoreFilter(row, minScore));
+const getGarpAnalysisRows = async ({ limit = 20, grade = "ALL", minScore = null, asOfDate = null } = {}, db = pool) => {
+  const rows = (await buildGarpAnalysisRows(asOfDate, db))
+    .filter(Boolean)
+    .filter((row) => matchesGradeFilter(row, grade) && matchesScoreFilter(row, minScore));
   return sortByOverallRank(rows).slice(0, Number(limit) || 20);
 };
 
-const getGarpAnalysisBySymbol = async (symbol, db = pool) => {
-  const rows = (await buildGarpAnalysisRows(db)).filter(Boolean);
+const getGarpAnalysisBySymbol = async (symbol, asOfDate = null, db = pool) => {
+  const rows = (await buildGarpAnalysisRows(asOfDate, db)).filter(Boolean);
   return rows.find((row) => String(row.symbol || "").toUpperCase() === String(symbol || "").trim().toUpperCase()) || null;
 };
 
-const getGarpAnalysisBuckets = async ({ limit = 50, grade = "ALL", minScore = null } = {}, db = pool) => {
-  const rows = (await buildGarpAnalysisRows(db)).filter(Boolean).filter((row) => matchesGradeFilter(row, grade) && matchesScoreFilter(row, minScore));
+const getGarpAnalysisBuckets = async ({ limit = 50, grade = "ALL", minScore = null, asOfDate = null } = {}, db = pool) => {
+  const rows = (await buildGarpAnalysisRows(asOfDate, db))
+    .filter(Boolean)
+    .filter((row) => matchesGradeFilter(row, grade) && matchesScoreFilter(row, minScore));
   const overallRows = sortByOverallRank(rows).slice(0, Number(limit) || 50);
   const tier1Rows = sortByOverallRank(rows.filter((row) => Boolean(row?.analysis?.flags?.tier1_passed))).slice(0, Number(limit) || 50);
   const tier2Rows = sortByTierScore(rows.filter((row) => Number(row?.analysis?.tier_scores?.tier2 || 0) > 0), "tier2").slice(0, Number(limit) || 50);

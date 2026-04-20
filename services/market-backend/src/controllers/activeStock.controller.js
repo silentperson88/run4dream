@@ -1,14 +1,16 @@
 const activeStockService = require("../services/activestock.service");
 const constantsUtils = require("../utils/constants.utils");
 const { response } = require("../utils/response.utils");
+const { getAsOfDateFromRequest } = require("../utils/asOfDate.utils");
 
 exports.getActiveStocksList = async (req, res) => {
   try {
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit || req.query.pageSize, 10) || 50;
     const search = String(req.query.search || req.query.searchValue || "");
+    const asOfDate = getAsOfDateFromRequest(req);
 
-    const result = await activeStockService.getActiveStocks(page, limit, search);
+    const result = await activeStockService.getActiveStocks(page, limit, search, { asOfDate });
 
     return response(res, 200, "Active stocks fetched successfully", result);
   } catch (error) {

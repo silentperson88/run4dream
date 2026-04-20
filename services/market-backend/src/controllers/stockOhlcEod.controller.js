@@ -4,6 +4,7 @@ const {
   getEodByMasterIdRangeFromDb,
 } = require("../services/stockOhlcEod.service");
 const masterService = require("../services/stockMaster.service");
+const { getAsOfDateFromRequest } = require("../utils/asOfDate.utils");
 
 function toIsoDateOnly(value) {
   return new Date(value).toISOString().slice(0, 10);
@@ -126,7 +127,9 @@ async function fetchEodByRangeChunked(req, res) {
 async function getEodFromDbByRange(req, res) {
   try {
     const { master_id } = req.params;
-    const { fromDate, toDate } = req.query;
+    const asOfDate = getAsOfDateFromRequest(req);
+    const { fromDate } = req.query;
+    const toDate = req.query?.toDate || asOfDate || null;
     const limit = req.query.limit ? Number(req.query.limit) : 5000;
 
     const data = await getEodByMasterIdRangeFromDb({
@@ -139,6 +142,7 @@ async function getEodFromDbByRange(req, res) {
     return res.json({
       success: true,
       count: data.length,
+      as_of_date: asOfDate,
       data,
     });
   } catch (err) {

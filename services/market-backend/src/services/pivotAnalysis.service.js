@@ -543,8 +543,8 @@ const buildPivotAnalysisRow = (baseRow, activeRow, quarterStats, balanceStats) =
   };
 };
 
-const buildPivotAnalysisRows = async ({ includeRejected = false } = {}, db = pool) => {
-  const baseRows = (await buildValueAnalysisRows({ tier1Only: false }, db)).filter(Boolean);
+const buildPivotAnalysisRows = async ({ includeRejected = false, asOfDate = null } = {}, db = pool) => {
+  const baseRows = (await buildValueAnalysisRows({ tier1Only: false, asOfDate }, db)).filter(Boolean);
   if (!baseRows.length) return [];
 
   const masterIds = baseRows.map((r) => Number(r.master_id)).filter((n) => Number.isFinite(n));
@@ -599,8 +599,8 @@ const buildPivotAnalysisRows = async ({ includeRejected = false } = {}, db = poo
   return filtered;
 };
 
-const getPivotAnalysisBuckets = async ({ limit = 50, grade = "ALL", minScore = null, includeRejected = false } = {}, db = pool) => {
-  const rows = (await buildPivotAnalysisRows({ includeRejected }, db))
+const getPivotAnalysisBuckets = async ({ limit = 50, grade = "ALL", minScore = null, includeRejected = false, asOfDate = null } = {}, db = pool) => {
+  const rows = (await buildPivotAnalysisRows({ includeRejected, asOfDate }, db))
     .filter((row) => matchGrade(row, grade))
     .filter((row) => matchScore(row, minScore));
 
@@ -637,8 +637,8 @@ const getPivotAnalysisBuckets = async ({ limit = 50, grade = "ALL", minScore = n
   };
 };
 
-const getPivotAnalysisBySymbol = async (symbol, db = pool) => {
-  const rows = await buildPivotAnalysisRows({ includeRejected: true }, db);
+const getPivotAnalysisBySymbol = async (symbol, asOfDate = null, db = pool) => {
+  const rows = await buildPivotAnalysisRows({ includeRejected: true, asOfDate }, db);
   return rows.find((row) => String(row.symbol || "").toUpperCase() === String(symbol || "").trim().toUpperCase()) || null;
 };
 

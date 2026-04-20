@@ -696,12 +696,12 @@ const enrichRowForSearch = (row, activeByMasterId, candlesByMasterId) => {
   };
 };
 
-const getSearchUniverseRows = async (db = pool) => {
-  const baseRows = await buildValueAnalysisRows({ tier1Only: false }, db);
+const getSearchUniverseRows = async ({ asOfDate = null } = {}, db = pool) => {
+  const baseRows = await buildValueAnalysisRows({ tier1Only: false, asOfDate }, db);
   const masterIds = baseRows.map((row) => Number(row.master_id)).filter((value) => Number.isFinite(value) && value > 0);
   const [activeRows, candleRows] = await Promise.all([
     activeStocksRepo.listByMasterIds(masterIds, db),
-    eodRepo.listRecentCandlesByMasterIds(masterIds, { limitPerMaster: 260 }, db),
+    eodRepo.listRecentCandlesByMasterIds(masterIds, { limitPerMaster: 260, asOfDate }, db),
   ]);
 
   const activeByMasterId = new Map(activeRows.map((row) => [Number(row.master_id), row]));
@@ -881,7 +881,7 @@ const suggestSearchFields = (query = "") => {
   }));
 };
 
-const searchStocks = async ({ query = "", limit = 50 } = {}, db = pool) => {
+const searchStocks = async ({ query = "", limit = 50, asOfDate = null } = {}, db = pool) => {
   const parsedClauses = parseQuery(query);
   if (!String(query || "").trim()) {
     return { query, parsed: [], total: 0, rows: [], suggestions: [] };
@@ -896,7 +896,7 @@ const searchStocks = async ({ query = "", limit = 50 } = {}, db = pool) => {
     };
   });
 
-  const rows = await getSearchUniverseRows(db);
+  const rows = await getSearchUniverseRows({ asOfDate }, db);
   const maxRows = Math.max(1, Math.min(100, Number(limit) || 50));
   const rankedRows = rows
     .map((row) => {

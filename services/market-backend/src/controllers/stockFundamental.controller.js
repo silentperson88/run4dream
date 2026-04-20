@@ -12,6 +12,7 @@ const path = require("path");
 
 const { response } = require("../utils/response.utils");
 const { responseUtils } = require("../utils/Constants/responseContants.utils");
+const { getAsOfDateFromRequest, filterRowsByAsOfDate } = require("../utils/asOfDate.utils");
 const { pythonApi } = require("../pythonApi/apiService.py");
 const { PYTHON_ENDPOINTS } = require("../pythonApi/endpoints.py");
 const redis = require("../config/redis.config");
@@ -35,6 +36,130 @@ const normalizeTextArray = (value) => {
       return null;
     })
     .filter(Boolean);
+};
+
+const MONTH_MAP = {
+  jan: 0,
+  january: 0,
+  feb: 1,
+  february: 1,
+  mar: 2,
+  march: 2,
+  apr: 3,
+  april: 3,
+  may: 4,
+  jun: 5,
+  june: 5,
+  jul: 6,
+  july: 6,
+  aug: 7,
+  august: 7,
+  sep: 8,
+  sept: 8,
+  september: 8,
+  oct: 9,
+  october: 9,
+  nov: 10,
+  november: 10,
+  dec: 11,
+  december: 11,
+};
+
+const parseLegacyHeaderDate = (header) => {
+  const text = String(header || "").trim();
+  if (!text) return null;
+
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  if (["ttm", "latest", "current", "today", "now"].includes(normalized)) {
+    return "__DROP_FOR_HISTORICAL__";
+  }
+
+  const monthYearMatch = normalized.match(
+    /^(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)[\s-]+(\d{2,4})$/,
+  );
+  if (monthYearMatch) {
+    const monthIndex = MONTH_MAP[monthYearMatch[1]];
+    const yearRaw = Number(monthYearMatch[2]);
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    const date = new Date(Date.UTC(year, monthIndex + 1, 0));
+    return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+  }
+
+  const yearMatch = normalized.match(/^(\d{4})$/);
+  if (yearMatch) {
+    const year = Number(yearMatch[1]);
+    const date = new Date(Date.UTC(year, 11, 31));
+    return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+  }
+
+  return null;
+};
+
+const trimLegacyRowNodeValues = (node, indexes = []) => {
+  if (!node || typeof node !== "object") return node;
+
+  const nextNode = {
+    ...node,
+    values: Array.isArray(node.values) ? indexes.map((index) => node.values[index]) : node.values,
+  };
+
+  if (Array.isArray(node.children)) {
+    nextNode.children = node.children.map((child) => trimLegacyRowNodeValues(child, indexes));
+  }
+
+  return nextNode;
+};
+
+const trimLegacyMappedTableByAsOfDate = (table, asOfDate) => {
+  if (!asOfDate || !table || typeof table !== "object" || !Array.isArray(table.headers)) return table;
+
+  const keepIndexes = table.headers.reduce((acc, header, index) => {
+    const parsed = parseLegacyHeaderDate(header);
+    if (parsed === "__DROP_FOR_HISTORICAL__") return acc;
+    if (parsed === null || parsed <= asOfDate) acc.push(index);
+    return acc;
+  }, []);
+
+  if (keepIndexes.length === table.headers.length) return table;
+
+  const nextRows = Object.fromEntries(
+    Object.entries(table.rows || {}).map(([key, value]) => [key, trimLegacyRowNodeValues(value, keepIndexes)]),
+  );
+
+  const nextUnmatchedRows = Array.isArray(table.unmatched_rows)
+    ? table.unmatched_rows.map((item) => {
+        const nextItem = { ...(item || {}) };
+        table.headers.forEach((header, index) => {
+          if (!keepIndexes.includes(index)) delete nextItem[header];
+        });
+        return nextItem;
+      })
+    : table.unmatched_rows;
+
+  return {
+    ...table,
+    headers: keepIndexes.map((index) => table.headers[index]),
+    rows: nextRows,
+    unmatched_rows: nextUnmatchedRows,
+  };
+};
+
+const trimLegacyFundamentalsTables = (data, asOfDate) => {
+  if (!asOfDate || !data || typeof data !== "object") return data;
+
+  const tables = data.tables && typeof data.tables === "object" ? data.tables : {};
+  return {
+    ...data,
+    tables: {
+      ...tables,
+      quarters: trimLegacyMappedTableByAsOfDate(tables.quarters, asOfDate),
+      profit_loss: trimLegacyMappedTableByAsOfDate(tables.profit_loss, asOfDate),
+      balance_sheet: trimLegacyMappedTableByAsOfDate(tables.balance_sheet, asOfDate),
+      cash_flow: trimLegacyMappedTableByAsOfDate(tables.cash_flow, asOfDate),
+      ratios: trimLegacyMappedTableByAsOfDate(tables.ratios, asOfDate),
+      shareholdings: trimLegacyMappedTableByAsOfDate(tables.shareholdings, asOfDate),
+    },
+  };
 };
 
 const TABLE_ROW_CATALOG_PATH = path.join(
@@ -326,6 +451,7 @@ exports.fetchStockFundamentals = async (req, res) => {
 exports.getStockFundamentalsBySymbol = async (req, res) => {
   try {
     const { symbol } = req.params;
+    const asOfDate = getAsOfDateFromRequest(req);
     const master = await stockMasterService.getMasterStockBySymbol(symbol);
     if (!master) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
 
@@ -334,13 +460,15 @@ exports.getStockFundamentalsBySymbol = async (req, res) => {
       stockTechnicalService.getMomentumSnapshotByMasterId(master.id),
     ]);
 
-    const data = fundamentalsResult.status === "fulfilled" ? fundamentalsResult.value : null;
+    const rawData = fundamentalsResult.status === "fulfilled" ? fundamentalsResult.value : null;
+    const data = trimLegacyFundamentalsTables(rawData, asOfDate);
     if (!data) {
       return response(res, 400, responseUtils.FAILED_TO_FETCH_STOCK_FUNDAMENTALS);
     }
 
     return response(res, 200, responseUtils.SUCCESS, {
       ...data,
+      as_of_date: asOfDate,
       technicals: momentumResult.status === "fulfilled" ? momentumResult.value : null,
     });
   } catch (error) {
@@ -368,23 +496,25 @@ exports.getOverviewStockFundamentalsBySymbol = async (req, res) => {
 exports.getQuarterlyStockFundamentalsBySymbol = async (req, res) => {
   try {
     const { symbol } = req.params;
+    const asOfDate = getAsOfDateFromRequest(req);
     const master = await stockMasterService.getMasterStockBySymbol(symbol);
     if (!master) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
 
-    const rows = await stockFundamentalsService.getQuarterlyFundamentalsBySymbol(symbol);
+    const rows = filterRowsByAsOfDate(await stockFundamentalsService.getQuarterlyFundamentalsBySymbol(symbol), asOfDate);
     return response(res, 200, responseUtils.SUCCESS, {
       symbol: master.symbol || symbol,
       company_name: master.name || null,
       master_id: String(master.id),
       active_stock_id: rows?.[0]?.active_stock_id ? String(rows[0].active_stock_id) : null,
       rows: Array.isArray(rows) ? rows : [],
+      as_of_date: asOfDate,
     });
   } catch (error) {
     return response(res, 500, responseUtils.SERVER_ERROR, error);
   }
 };
 
-const buildSplitSectionResponse = async (symbol, section) => {
+const buildSplitSectionResponse = async (symbol, section, asOfDate = null) => {
   const master = await stockMasterService.getMasterStockBySymbol(symbol);
   if (!master) return { status: 400, body: responseUtils.STOCK_NOT_FOUND };
 
@@ -396,7 +526,7 @@ const buildSplitSectionResponse = async (symbol, section) => {
     shareholdings: stockFundamentalsService.getShareholdingFundamentalsBySymbol,
   };
 
-  const rows = await getterMap[section](symbol);
+  const rows = filterRowsByAsOfDate(await getterMap[section](symbol), asOfDate);
   return {
     status: 200,
     body: responseUtils.SUCCESS,
@@ -406,6 +536,7 @@ const buildSplitSectionResponse = async (symbol, section) => {
       master_id: String(master.id),
       active_stock_id: rows?.[0]?.active_stock_id ? String(rows[0].active_stock_id) : null,
       rows: Array.isArray(rows) ? rows : [],
+      as_of_date: asOfDate,
     },
   };
 };
@@ -413,7 +544,8 @@ const buildSplitSectionResponse = async (symbol, section) => {
 exports.getProfitLossStockFundamentalsBySymbol = async (req, res) => {
   try {
     const { symbol } = req.params;
-    const result = await buildSplitSectionResponse(symbol, "profit_loss");
+    const asOfDate = getAsOfDateFromRequest(req);
+    const result = await buildSplitSectionResponse(symbol, "profit_loss", asOfDate);
     if (result.status !== 200) return response(res, result.status, result.body);
     return response(res, 200, result.body, result.data);
   } catch (error) {
@@ -424,7 +556,8 @@ exports.getProfitLossStockFundamentalsBySymbol = async (req, res) => {
 exports.getBalanceSheetStockFundamentalsBySymbol = async (req, res) => {
   try {
     const { symbol } = req.params;
-    const result = await buildSplitSectionResponse(symbol, "balance_sheet");
+    const asOfDate = getAsOfDateFromRequest(req);
+    const result = await buildSplitSectionResponse(symbol, "balance_sheet", asOfDate);
     if (result.status !== 200) return response(res, result.status, result.body);
     return response(res, 200, result.body, result.data);
   } catch (error) {
@@ -435,7 +568,8 @@ exports.getBalanceSheetStockFundamentalsBySymbol = async (req, res) => {
 exports.getCashFlowStockFundamentalsBySymbol = async (req, res) => {
   try {
     const { symbol } = req.params;
-    const result = await buildSplitSectionResponse(symbol, "cash_flow");
+    const asOfDate = getAsOfDateFromRequest(req);
+    const result = await buildSplitSectionResponse(symbol, "cash_flow", asOfDate);
     if (result.status !== 200) return response(res, result.status, result.body);
     return response(res, 200, result.body, result.data);
   } catch (error) {
@@ -446,7 +580,8 @@ exports.getCashFlowStockFundamentalsBySymbol = async (req, res) => {
 exports.getRatiosStockFundamentalsBySymbol = async (req, res) => {
   try {
     const { symbol } = req.params;
-    const result = await buildSplitSectionResponse(symbol, "ratios");
+    const asOfDate = getAsOfDateFromRequest(req);
+    const result = await buildSplitSectionResponse(symbol, "ratios", asOfDate);
     if (result.status !== 200) return response(res, result.status, result.body);
     return response(res, 200, result.body, result.data);
   } catch (error) {
@@ -457,7 +592,8 @@ exports.getRatiosStockFundamentalsBySymbol = async (req, res) => {
 exports.getShareholdingStockFundamentalsBySymbol = async (req, res) => {
   try {
     const { symbol } = req.params;
-    const result = await buildSplitSectionResponse(symbol, "shareholdings");
+    const asOfDate = getAsOfDateFromRequest(req);
+    const result = await buildSplitSectionResponse(symbol, "shareholdings", asOfDate);
     if (result.status !== 200) return response(res, result.status, result.body);
     return response(res, 200, result.body, result.data);
   } catch (error) {
@@ -553,12 +689,13 @@ exports.getGrowthAnalysisBySymbol = async (req, res) => {
 
 exports.getGarpAnalysis = async (req, res) => {
   try {
+    const asOfDate = getAsOfDateFromRequest(req);
     const limit = Math.max(1, Math.min(200, Number(req.query?.limit || 50)));
     const grade = String(req.query?.grade || "ALL");
     const minScore = req.query?.minScore !== undefined && req.query?.minScore !== null && req.query?.minScore !== ""
       ? Number(req.query?.minScore)
       : null;
-    const buckets = await garpAnalysisService.getGarpAnalysisBuckets({ limit, grade, minScore });
+    const buckets = await garpAnalysisService.getGarpAnalysisBuckets({ limit, grade, minScore, asOfDate });
     return response(res, 200, responseUtils.SUCCESS, {
       total: buckets.total,
       rows: buckets.overallRows,
@@ -567,6 +704,7 @@ exports.getGarpAnalysis = async (req, res) => {
         limit,
         grade: grade || "ALL",
         minScore,
+        asOfDate,
       },
     });
   } catch (error) {
@@ -577,11 +715,13 @@ exports.getGarpAnalysis = async (req, res) => {
 exports.getGarpAnalysisBySymbol = async (req, res) => {
   try {
     const { symbol } = req.params;
-    const row = await garpAnalysisService.getGarpAnalysisBySymbol(symbol);
+    const asOfDate = getAsOfDateFromRequest(req);
+    const row = await garpAnalysisService.getGarpAnalysisBySymbol(symbol, asOfDate);
     if (!row) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
 
     return response(res, 200, responseUtils.SUCCESS, {
       ...row,
+      as_of_date: asOfDate,
     });
   } catch (error) {
     return response(res, 500, responseUtils.SERVER_ERROR, error);
@@ -590,17 +730,18 @@ exports.getGarpAnalysisBySymbol = async (req, res) => {
 
 exports.getValueAnalysis = async (req, res) => {
   try {
+    const asOfDate = getAsOfDateFromRequest(req);
     const limit = Math.max(1, Math.min(200, Number(req.query?.limit || 50)));
     const grade = String(req.query?.grade || "ALL");
     const minScore = req.query?.minScore !== undefined && req.query?.minScore !== null && req.query?.minScore !== ""
       ? Number(req.query?.minScore)
       : null;
-    const buckets = await valueAnalysisService.getValueAnalysisBuckets({ limit, grade, minScore });
+    const buckets = await valueAnalysisService.getValueAnalysisBuckets({ limit, grade, minScore, asOfDate });
     return response(res, 200, responseUtils.SUCCESS, {
       total: buckets.total,
       rows: buckets.overallRows,
       buckets: buckets.tierRows,
-      filters: { limit, grade: grade || "ALL", minScore },
+      filters: { limit, grade: grade || "ALL", minScore, asOfDate },
     });
   } catch (error) {
     return response(res, 500, responseUtils.SERVER_ERROR, error);
@@ -610,10 +751,11 @@ exports.getValueAnalysis = async (req, res) => {
 exports.getValueAnalysisBySymbol = async (req, res) => {
   try {
     const { symbol } = req.params;
-    const row = await valueAnalysisService.getValueAnalysisBySymbol(symbol);
+    const asOfDate = getAsOfDateFromRequest(req);
+    const row = await valueAnalysisService.getValueAnalysisBySymbol(symbol, asOfDate);
     if (!row) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
 
-    return response(res, 200, responseUtils.SUCCESS, { ...row });
+    return response(res, 200, responseUtils.SUCCESS, { ...row, as_of_date: asOfDate });
   } catch (error) {
     return response(res, 500, responseUtils.SERVER_ERROR, error);
   }
@@ -621,6 +763,7 @@ exports.getValueAnalysisBySymbol = async (req, res) => {
 
 exports.getPivotAnalysis = async (req, res) => {
   try {
+    const asOfDate = getAsOfDateFromRequest(req);
     const limit = Math.max(1, Math.min(200, Number(req.query?.limit || 50)));
     const grade = String(req.query?.grade || "ALL");
     const minScore =
@@ -628,13 +771,13 @@ exports.getPivotAnalysis = async (req, res) => {
         ? Number(req.query?.minScore)
         : null;
     const includeRejected = String(req.query?.includeRejected || "false").toLowerCase() === "true";
-    const buckets = await pivotAnalysisService.getPivotAnalysisBuckets({ limit, grade, minScore, includeRejected });
+    const buckets = await pivotAnalysisService.getPivotAnalysisBuckets({ limit, grade, minScore, includeRejected, asOfDate });
     return response(res, 200, responseUtils.SUCCESS, {
       total: buckets.total,
       rows: buckets.overallRows,
       buckets: buckets.tierRows,
       summary: buckets.summary,
-      filters: { limit, grade: grade || "ALL", minScore, includeRejected },
+      filters: { limit, grade: grade || "ALL", minScore, includeRejected, asOfDate },
     });
   } catch (error) {
     return response(res, 500, responseUtils.SERVER_ERROR, error);
@@ -644,10 +787,11 @@ exports.getPivotAnalysis = async (req, res) => {
 exports.getPivotAnalysisBySymbol = async (req, res) => {
   try {
     const { symbol } = req.params;
-    const row = await pivotAnalysisService.getPivotAnalysisBySymbol(symbol);
+    const asOfDate = getAsOfDateFromRequest(req);
+    const row = await pivotAnalysisService.getPivotAnalysisBySymbol(symbol, asOfDate);
     if (!row) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
 
-    return response(res, 200, responseUtils.SUCCESS, { ...row });
+    return response(res, 200, responseUtils.SUCCESS, { ...row, as_of_date: asOfDate });
   } catch (error) {
     return response(res, 500, responseUtils.SERVER_ERROR, error);
   }
@@ -671,12 +815,14 @@ exports.searchStocks = async (req, res) => {
   try {
     const query = String(req.query?.q || "").trim();
     const limit = Math.max(1, Math.min(100, Number(req.query?.limit || 50)));
-    const result = await stockSearchService.searchStocks({ query, limit });
+    const asOfDate = getAsOfDateFromRequest(req);
+    const result = await stockSearchService.searchStocks({ query, limit, asOfDate });
     return response(res, 200, responseUtils.SUCCESS, {
       ...result,
       filters: {
         query,
         limit,
+        asOfDate,
       },
     });
   } catch (error) {

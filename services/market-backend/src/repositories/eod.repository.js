@@ -109,15 +109,83 @@ const getLatestTradeDatesByMasterIds = async (masterIds = [], db = pool) => {
   return new Map(rows.map((row) => [Number(row.master_id), row.latest_trade_date || null]));
 };
 
+const getLatestTradeDatesByMasterIdsAsOfDate = async (masterIds = [], asOfDate, db = pool) => {
+  const ids = Array.from(new Set(masterIds.map(Number).filter((n) => Number.isFinite(n) && n > 0)));
+  if (!ids.length) return new Map();
+
+  const values = [ids];
+  let dateClause = "";
+  if (asOfDate) {
+    values.push(asOfDate);
+    dateClause = `AND trade_date <= $${values.length}::date`;
+  }
+
+  const { rows } = await db.query(
+    `
+      SELECT master_id, MAX(trade_date)::date AS latest_trade_date
+      FROM eod
+      WHERE master_id = ANY($1::bigint[])
+      ${dateClause}
+      GROUP BY master_id
+    `,
+    values,
+  );
+
+  return new Map(rows.map((row) => [Number(row.master_id), row.latest_trade_date || null]));
+};
+
+const getLatestCandleRowsByMasterIds = async (masterIds = [], asOfDate = null, db = pool) => {
+  const ids = Array.from(new Set(masterIds.map(Number).filter((n) => Number.isFinite(n) && n > 0)));
+  if (!ids.length) return [];
+
+  const values = [ids];
+  let dateClause = "";
+  if (asOfDate) {
+    values.push(asOfDate);
+    dateClause = `AND trade_date <= $${values.length}::date`;
+  }
+
+  const { rows } = await db.query(
+    `
+      SELECT DISTINCT ON (master_id)
+        master_id,
+        symbol,
+        exchange,
+        trade_date,
+        open,
+        high,
+        low,
+        close,
+        volume,
+        source
+      FROM eod
+      WHERE master_id = ANY($1::bigint[])
+      ${dateClause}
+      ORDER BY master_id ASC, trade_date DESC
+    `,
+    values,
+  );
+
+  return rows.map(normalizeEod);
+};
+
 const listRecentCandlesByMasterIds = async (
   masterIds = [],
-  { limitPerMaster = 260 } = {},
+  { limitPerMaster = 260, asOfDate = null } = {},
   db = pool,
 ) => {
   const ids = Array.from(new Set(masterIds.map(Number).filter((n) => Number.isFinite(n) && n > 0)));
   if (!ids.length) return [];
 
   const safeLimit = Math.max(1, Math.min(1000, Number(limitPerMaster) || 260));
+  const values = [ids];
+  let dateClause = "";
+  if (asOfDate) {
+    values.push(asOfDate);
+    dateClause = `AND trade_date <= $${values.length}::date`;
+  }
+  values.push(safeLimit);
+
   const { rows } = await db.query(
     `
       WITH ranked AS (
@@ -131,10 +199,11 @@ const listRecentCandlesByMasterIds = async (
           low,
           close,
           volume,
-          source,
+        source,
           ROW_NUMBER() OVER (PARTITION BY master_id ORDER BY trade_date DESC) AS rn
         FROM eod
         WHERE master_id = ANY($1::bigint[])
+        ${dateClause}
       )
       SELECT
         master_id,
@@ -148,10 +217,10 @@ const listRecentCandlesByMasterIds = async (
         volume,
         source
       FROM ranked
-      WHERE rn <= $2
+      WHERE rn <= $${values.length}
       ORDER BY master_id ASC, trade_date ASC
     `,
-    [ids, safeLimit],
+    values,
   );
 
   return rows.map(normalizeEod);
@@ -207,6 +276,8 @@ module.exports = {
   upsertDailyCandle,
   getLatestTradeDateByMasterId,
   getLatestTradeDatesByMasterIds,
+  getLatestTradeDatesByMasterIdsAsOfDate,
+  getLatestCandleRowsByMasterIds,
   listRecentCandlesByMasterIds,
   listDailyCandlesByMasterIdRange,
   upsertMonthlyCandle: upsertDailyCandle,

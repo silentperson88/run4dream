@@ -1,5 +1,6 @@
 const activeStocksRepo = require("../repositories/activeStocks.repository");
 const stockMasterRepo = require("../repositories/stockMaster.repository");
+const eodRepo = require("../repositories/eod.repository");
 
 exports.addStock = async (stockData, db) => {
   if (
@@ -20,8 +21,30 @@ exports.addStock = async (stockData, db) => {
   }
 };
 
-exports.getActiveStocks = async (page = 1, limit = 50, search = "") =>
-  activeStocksRepo.listActive({ page, limit, search });
+exports.getActiveStocks = async (page = 1, limit = 50, search = "", options = {}) => {
+  const rows = await activeStocksRepo.listActive({ page, limit, search });
+  const asOfDate = options?.asOfDate || null;
+  if (!asOfDate) return rows;
+
+  const candleRows = await eodRepo.getLatestCandleRowsByMasterIds(rows.map((row) => row.master_id), asOfDate);
+  const candleByMasterId = new Map(candleRows.map((row) => [Number(row.master_id), row]));
+
+  return rows.map((row) => {
+    const candle = candleByMasterId.get(Number(row.master_id));
+    if (!candle) return row;
+
+    return {
+      ...row,
+      ltp: candle.close ?? row.ltp,
+      open: candle.open ?? row.open,
+      high: candle.high ?? row.high,
+      low: candle.low ?? row.low,
+      close: candle.close ?? row.close,
+      volume: candle.volume ?? row.volume,
+      updated_at: candle.trade_date || row.updated_at,
+    };
+  });
+};
 
 exports.getAllActiveStocks = async () => activeStocksRepo.listActive();
 
