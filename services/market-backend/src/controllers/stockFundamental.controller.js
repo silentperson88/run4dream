@@ -21,6 +21,7 @@ const { enqueueFundamentalsJobs } = require("../schedulers/fundamentals.schedule
 const { scrapeWithFallback } = require("../services/fundamentalsScrape.service");
 const { buildMappedFundamentals } = require("../services/fundamentalsMapper.service");
 const stockTechnicalService = require("../services/stockTechnical.service");
+const eodRepository = require("../repositories/eod.repository");
 
 const normalizeTextArray = (value) => {
   if (!Array.isArray(value)) return [];
@@ -36,6 +37,56 @@ const normalizeTextArray = (value) => {
       return null;
     })
     .filter(Boolean);
+};
+
+const toNumberOrNull = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const buildHistoricalOverviewMarketSnapshot = async (masterId, fallbackSnapshot = {}, asOfDate = null) => {
+  if (!masterId || !asOfDate) {
+    return {
+      marketSnapshot: fallbackSnapshot,
+      latestTradeDate: null,
+    };
+  }
+
+  const [latestRows, recentCandles] = await Promise.all([
+    eodRepository.getLatestCandleRowsByMasterIds([masterId], asOfDate),
+    eodRepository.listRecentCandlesByMasterIds([masterId], { limitPerMaster: 252, asOfDate }),
+  ]);
+
+  const latest = Array.isArray(latestRows) ? latestRows[0] : null;
+  const candles = Array.isArray(recentCandles) ? recentCandles : [];
+  if (!latest || !candles.length) {
+    return {
+      marketSnapshot: fallbackSnapshot,
+      latestTradeDate: null,
+    };
+  }
+
+  const closes = candles.map((row) => toNumberOrNull(row.close)).filter((value) => value !== null);
+  const highs = candles.map((row) => toNumberOrNull(row.high)).filter((value) => value !== null);
+  const lows = candles.map((row) => toNumberOrNull(row.low)).filter((value) => value !== null);
+
+  const week52High = highs.length ? Math.max(...highs) : toNumberOrNull(fallbackSnapshot?.week52_high);
+  const week52Low = lows.length ? Math.min(...lows) : toNumberOrNull(fallbackSnapshot?.week52_low);
+
+  return {
+    marketSnapshot: {
+      ...fallbackSnapshot,
+      current_price: toNumberOrNull(latest.close) ?? fallbackSnapshot?.current_price ?? null,
+      high_low:
+        week52High !== null && week52Low !== null
+          ? `${week52High} / ${week52Low}`
+          : fallbackSnapshot?.high_low || null,
+      week52_high: week52High,
+      week52_low: week52Low,
+    },
+    latestTradeDate: latest.trade_date || null,
+  };
 };
 
 const MONTH_MAP = {
@@ -257,41 +308,64 @@ const buildProfitLossOtherCatalog = (otherTables) => {
   });
 };
 
-const buildOverviewFundamentalsPayload = async (masterStock) => {
-  const overviewRow = await stockFundamentalsService.getOverviewFundamentalsByMasterId(masterStock.id);
-  if (!overviewRow) return null;
+const buildOverviewFundamentalsPayload = async (masterStock, asOfDate = null) => {
+  const [overviewRow, fullFundamentals] = await Promise.all([
+    stockFundamentalsService.getOverviewFundamentalsByMasterId(masterStock.id),
+    stockFundamentalsService.getFullStockFundamentals(masterStock.id).catch(() => null),
+  ]);
+
+  const baseCompanyInfo = fullFundamentals?.company_info || {};
+  const baseSummary = fullFundamentals?.summary || {};
+  const baseMarketSnapshot = baseSummary?.market_snapshot || {};
+
+  if (!overviewRow && !fullFundamentals) return null;
 
   const technicals = await stockTechnicalService.getMomentumSnapshotByMasterId(masterStock.id).catch(() => null);
+  const fallbackMarketSnapshot = {
+    market_cap: overviewRow?.market_cap ?? baseMarketSnapshot?.market_cap ?? null,
+    current_price: overviewRow?.current_price ?? baseMarketSnapshot?.current_price ?? null,
+    high_low: overviewRow?.high_low ?? baseMarketSnapshot?.high_low ?? null,
+    stock_pe: overviewRow?.stock_pe ?? baseMarketSnapshot?.stock_pe ?? baseMarketSnapshot?.pe_ratio ?? null,
+    pe_ratio: overviewRow?.stock_pe ?? baseMarketSnapshot?.stock_pe ?? baseMarketSnapshot?.pe_ratio ?? null,
+    book_value: overviewRow?.book_value ?? baseMarketSnapshot?.book_value ?? null,
+    dividend_yield: overviewRow?.dividend_yield ?? baseMarketSnapshot?.dividend_yield ?? null,
+    roce: overviewRow?.roce ?? baseMarketSnapshot?.roce ?? null,
+    roe: overviewRow?.roe ?? baseMarketSnapshot?.roe ?? null,
+    face_value: overviewRow?.face_value ?? baseMarketSnapshot?.face_value ?? null,
+  };
+  const { marketSnapshot, latestTradeDate } = await buildHistoricalOverviewMarketSnapshot(
+    masterStock.id,
+    fallbackMarketSnapshot,
+    asOfDate,
+  );
 
   return {
     master_id: String(masterStock.id),
-    active_stock_id: overviewRow.active_stock_id ? String(overviewRow.active_stock_id) : null,
-    company: overviewRow.company_name || masterStock.name || null,
+    active_stock_id:
+      (overviewRow?.active_stock_id ? String(overviewRow.active_stock_id) : null) ||
+      (fullFundamentals?.active_stock_id ? String(fullFundamentals.active_stock_id) : null),
+    company: overviewRow?.company_name || fullFundamentals?.company || baseCompanyInfo?.company_name || masterStock.name || null,
     company_info: {
-      company_name: overviewRow.company_name || masterStock.name || null,
-      about: overviewRow.about || null,
-      key_points: overviewRow.key_points || null,
-      links: Array.isArray(overviewRow.links) ? overviewRow.links : [],
+      company_name: overviewRow?.company_name || baseCompanyInfo?.company_name || masterStock.name || null,
+      about: overviewRow?.about || baseCompanyInfo?.about || null,
+      key_points: overviewRow?.key_points || baseCompanyInfo?.key_points || null,
+      links: Array.isArray(overviewRow?.links) ? overviewRow.links : Array.isArray(baseCompanyInfo?.links) ? baseCompanyInfo.links : [],
     },
     summary: {
-      market_snapshot: {
-        market_cap: overviewRow.market_cap,
-        current_price: overviewRow.current_price,
-        high_low: overviewRow.high_low,
-        stock_pe: overviewRow.stock_pe,
-        pe_ratio: overviewRow.stock_pe,
-        book_value: overviewRow.book_value,
-        dividend_yield: overviewRow.dividend_yield,
-        roce: overviewRow.roce,
-        roe: overviewRow.roe,
-        face_value: overviewRow.face_value,
-      },
-      pros: Array.isArray(overviewRow.pros) ? overviewRow.pros : [],
-      cons: Array.isArray(overviewRow.cons) ? overviewRow.cons : [],
+      market_snapshot: marketSnapshot,
+      pros: Array.isArray(overviewRow?.pros) ? overviewRow.pros : Array.isArray(baseSummary?.pros) ? baseSummary.pros : [],
+      cons: Array.isArray(overviewRow?.cons) ? overviewRow.cons : Array.isArray(baseSummary?.cons) ? baseSummary.cons : [],
     },
     documents: {},
     technicals,
-    last_updated_at: overviewRow.last_updated_at || masterStock.updated_at || new Date().toISOString(),
+    as_of_date: asOfDate,
+    eod_trade_date: latestTradeDate,
+    last_updated_at:
+      (asOfDate && latestTradeDate) ||
+      overviewRow?.last_updated_at ||
+      fullFundamentals?.last_updated_at ||
+      masterStock.updated_at ||
+      new Date().toISOString(),
   };
 };
 
@@ -479,10 +553,11 @@ exports.getStockFundamentalsBySymbol = async (req, res) => {
 exports.getOverviewStockFundamentalsBySymbol = async (req, res) => {
   try {
     const { symbol } = req.params;
+    const asOfDate = getAsOfDateFromRequest(req);
     const master = await stockMasterService.getMasterStockBySymbol(symbol);
     if (!master) return response(res, 400, responseUtils.STOCK_NOT_FOUND);
 
-    const data = await buildOverviewFundamentalsPayload(master);
+    const data = await buildOverviewFundamentalsPayload(master, asOfDate);
     if (!data) {
       return response(res, 400, responseUtils.FAILED_TO_FETCH_STOCK_FUNDAMENTALS);
     }

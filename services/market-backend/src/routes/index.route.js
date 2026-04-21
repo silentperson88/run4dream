@@ -8,4 +8,5 @@ module.exports = (app) => {
   app.use(`${baseRoute}/eod`, require("./stockOhlcEod.route"));
   app.use(`${baseRoute}/ipo-gmp`, require("./ipoGmp.route"));
   app.use(`${baseRoute}/redis`, require("./redis.route"));
+  app.use(`${baseRoute}/historical-universe`, require("./historicalUniverse.route"));
 };

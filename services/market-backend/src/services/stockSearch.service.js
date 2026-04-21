@@ -1,7 +1,10 @@
 const { pool } = require("../config/db");
 const { buildValueAnalysisRows } = require("./valueAnalysis.service");
+const stockMasterService = require("./stockMaster.service");
 const activeStocksRepo = require("../repositories/activeStocks.repository");
 const eodRepo = require("../repositories/eod.repository");
+const { buildPeriodRows } = require("../repositories/fundamentalsSplit.repository");
+const { filterRowsByAsOfDate } = require("../utils/asOfDate.utils");
 
 const NUMBER_OPERATORS = [">=", "<=", "!=", "==", "=", ">", "<"];
 const TEXT_OPERATORS = ["contains", "starts with", "ends with", "=", "!="];
@@ -106,11 +109,12 @@ const compareBoolean = (value, operator, expected) => {
   return left === right;
 };
 
-const compare = (field, value, operator, expected) => {
+const compare = (field, value, operator, expected, expectedField = null, row = null) => {
   if (!field) return false;
-  if (field.type === "text") return compareText(value, operator, expected);
-  if (field.type === "boolean") return compareBoolean(value, operator, expected);
-  return compareNumber(value, operator, expected);
+  const resolvedExpected = expectedField && row ? expectedField.getValue(row) : expected;
+  if (field.type === "text") return compareText(value, operator, resolvedExpected);
+  if (field.type === "boolean") return compareBoolean(value, operator, resolvedExpected);
+  return compareNumber(value, operator, resolvedExpected);
 };
 
 const formatValue = (field, value) => {
@@ -312,9 +316,13 @@ const getReturnPct = (candles = [], offset) => {
 };
 
 const buildEodMetrics = (candles = []) => {
+  const latestOpen = getLatestCandleValue(candles, "open");
+  const latestHigh = getLatestCandleValue(candles, "high");
+  const latestLow = getLatestCandleValue(candles, "low");
   const latestClose = getLatestCandleValue(candles, "close");
   const latestVolume = getLatestCandleValue(candles, "volume");
   const last252 = candles.slice(Math.max(0, candles.length - 252));
+  const dma10 = averageCandleMetric(candles, "close", 10);
   const dma20 = averageCandleMetric(candles, "close", 20);
   const dma50 = averageCandleMetric(candles, "close", 50);
   const dma100 = averageCandleMetric(candles, "close", 100);
@@ -334,20 +342,36 @@ const buildEodMetrics = (candles = []) => {
 
   return {
     eod_close: latestClose,
-    eod_open: getLatestCandleValue(candles, "open"),
-    eod_high: getLatestCandleValue(candles, "high"),
-    eod_low: getLatestCandleValue(candles, "low"),
+    eod_open: latestOpen,
+    eod_high: latestHigh,
+    eod_low: latestLow,
     eod_volume: latestVolume,
+    eod_average_price:
+      [latestOpen, latestHigh, latestLow, latestClose].every((value) => value !== null)
+        ? (latestOpen + latestHigh + latestLow + latestClose) / 4
+        : null,
     return_1d: getReturnPct(candles, 1),
     return_1w: getReturnPct(candles, 5),
     return_1m: getReturnPct(candles, 21),
     return_3m: getReturnPct(candles, 63),
     return_6m: getReturnPct(candles, 126),
     return_1y: getReturnPct(candles, 252),
+    dma_10: dma10,
     dma_20: dma20,
     dma_50: dma50,
     dma_100: dma100,
     dma_200: dma200,
+    dma_10_vs_dma_20: dma10 !== null && dma20 !== null ? dma10 - dma20 : null,
+    dma_10_vs_dma_50: dma10 !== null && dma50 !== null ? dma10 - dma50 : null,
+    dma_10_vs_dma_100: dma10 !== null && dma100 !== null ? dma10 - dma100 : null,
+    dma_10_vs_dma_200: dma10 !== null && dma200 !== null ? dma10 - dma200 : null,
+    dma_20_vs_dma_50: dma20 !== null && dma50 !== null ? dma20 - dma50 : null,
+    dma_20_vs_dma_100: dma20 !== null && dma100 !== null ? dma20 - dma100 : null,
+    dma_20_vs_dma_200: dma20 !== null && dma200 !== null ? dma20 - dma200 : null,
+    dma_50_vs_dma_100: dma50 !== null && dma100 !== null ? dma50 - dma100 : null,
+    dma_50_vs_dma_200: dma50 !== null && dma200 !== null ? dma50 - dma200 : null,
+    dma_100_vs_dma_200: dma100 !== null && dma200 !== null ? dma100 - dma200 : null,
+    price_vs_dma_10_percent: getGrowthPercent(dma10, latestClose),
     price_vs_dma_20_percent: getGrowthPercent(dma20, latestClose),
     price_vs_dma_50_percent: getGrowthPercent(dma50, latestClose),
     price_vs_dma_100_percent: getGrowthPercent(dma100, latestClose),
@@ -362,6 +386,7 @@ const buildEodMetrics = (candles = []) => {
       latestClose !== null && high52w !== null && high52w > 0 ? ((high52w - latestClose) / high52w) * 100 : null,
     distance_from_52_week_low_percent:
       latestClose !== null && low52w !== null && low52w > 0 ? ((latestClose - low52w) / low52w) * 100 : null,
+    close_above_10_dma: latestClose !== null && dma10 !== null ? latestClose > dma10 : null,
     close_above_20_dma: latestClose !== null && dma20 !== null ? latestClose > dma20 : null,
     close_above_50_dma: latestClose !== null && dma50 !== null ? latestClose > dma50 : null,
     close_above_200_dma: latestClose !== null && dma200 !== null ? latestClose > dma200 : null,
@@ -433,7 +458,6 @@ const buildSearchMetrics = (row = {}, activeRow = null, candles = []) => {
   const bookValue = toNumber(row.book_value ?? row.bookValue);
   const faceValue = toNumber(row.face_value ?? row.faceValue);
   const marketCap = toNumber(row.market_cap ?? row.marketCap);
-  const currentPrice = toNumber(activeRow?.ltp) ?? toNumber(row.current_price ?? row.currentPrice ?? row.cmp ?? row.price);
   const totalAssets = getNumberFromObject(latestBalance, ["total_assets"]);
   const totalLiabilities = getNumberFromObject(latestBalance, ["total_liabilities"]);
   const reserves = getNumberFromObject(latestBalance, ["reserves"]);
@@ -454,13 +478,14 @@ const buildSearchMetrics = (row = {}, activeRow = null, candles = []) => {
   const averageRoce3Y = averageLastN(ratioRows, (item) => getNumberFromObject(item, ["roce_percent", "roce"]), 3);
   const averageRoce5Y = averageLastN(ratioRows, (item) => getNumberFromObject(item, ["roce_percent", "roce"]), 5);
   const eodMetrics = buildEodMetrics(candles);
+  const currentPrice = eodMetrics.eod_close ?? toNumber(row.current_price ?? row.currentPrice ?? row.cmp ?? row.price);
 
   const metrics = {
     symbol: row.symbol || activeRow?.symbol || null,
     company_name: row.name || row.company_name || activeRow?.name || null,
     market_cap: marketCap,
     current_price: currentPrice,
-    ltp: toNumber(activeRow?.ltp) ?? currentPrice,
+    ltp: currentPrice,
     pe_ratio: analysisMetrics.pe_ratio ?? valueMetrics.pe_ratio ?? toNumber(row.stock_pe ?? row.pe_ratio),
     price_to_earning: analysisMetrics.pe_ratio ?? valueMetrics.pe_ratio ?? toNumber(row.stock_pe ?? row.pe_ratio),
     peg_ratio: toNumber(row.peg_ratio ?? analysisMetrics.peg_ratio ?? valueMetrics.peg_ratio),
@@ -514,18 +539,21 @@ const buildSearchMetrics = (row = {}, activeRow = null, candles = []) => {
     no_of_shareholders: toNumber(row.number_of_shareholders ?? row.no_of_shareholders),
     face_value: faceValue,
     book_value: bookValue,
-    percent_change: toNumber(activeRow?.percentChange),
-    average_price: toNumber(activeRow?.avgPrice),
+    percent_change: eodMetrics.return_1d,
+    average_price: eodMetrics.eod_average_price,
     lower_circuit: toNumber(activeRow?.lowerCircuit),
     upper_circuit: toNumber(activeRow?.upperCircuit),
-    week_52_low: toNumber(activeRow?.week52Low),
-    week_52_high: toNumber(activeRow?.week52High),
+    week_52_low: eodMetrics.eod_52_week_low,
+    week_52_high: eodMetrics.eod_52_week_high,
   };
 
   metrics.price_from_52_week_high_percent =
     currentPrice !== null && metrics.week_52_high ? ((metrics.week_52_high - currentPrice) / metrics.week_52_high) * 100 : null;
   metrics.price_from_52_week_low_percent =
     currentPrice !== null && metrics.week_52_low ? ((currentPrice - metrics.week_52_low) / metrics.week_52_low) * 100 : null;
+
+  metrics.distance_from_52_week_high_percent = eodMetrics.distance_from_52_week_high_percent;
+  metrics.distance_from_52_week_low_percent = eodMetrics.distance_from_52_week_low_percent;
 
   metrics.sales_growth_1y = getGrowthPercent(
     getPrevious(profitRows, (item) => getNumberFromObject(item, ["sales", "revenue"])),
@@ -696,18 +724,168 @@ const enrichRowForSearch = (row, activeByMasterId, candlesByMasterId) => {
   };
 };
 
-const getSearchUniverseRows = async ({ asOfDate = null } = {}, db = pool) => {
-  const baseRows = await buildValueAnalysisRows({ tier1Only: false, asOfDate }, db);
-  const masterIds = baseRows.map((row) => Number(row.master_id)).filter((value) => Number.isFinite(value) && value > 0);
+const getSearchUniverseRows = async ({ asOfDate = null, masterIds = null } = {}, db = pool) => {
+  const allowedMasterIds = Array.isArray(masterIds)
+    ? new Set(masterIds.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0))
+    : null;
+
+  let baseRows = (await buildValueAnalysisRows({ tier1Only: false, asOfDate }, db)).filter((row) => {
+    if (!allowedMasterIds) return true;
+    return allowedMasterIds.has(Number(row.master_id));
+  });
+
+  if (!baseRows.length) {
+    const masterRows = await stockMasterService.getAllMasterStocks();
+    const candidateMasters = masterRows.filter((row) => {
+      const masterId = Number(row?.id);
+      if (!Number.isFinite(masterId) || masterId <= 0) return false;
+      if (allowedMasterIds && !allowedMasterIds.has(masterId)) return false;
+      return row?.is_active === true && String(row?.screener_status || "").toUpperCase() === "VALID";
+    });
+
+    const fallbackMasterIds = candidateMasters.map((row) => Number(row.id));
+    const { rows: fundamentalsRows } = await db.query(
+      `
+        SELECT *
+        FROM stock_screener_fundamentals
+        WHERE master_id = ANY($1::bigint[])
+      `,
+      [fallbackMasterIds],
+    );
+    const fundamentalsByMasterId = new Map(fundamentalsRows.map((row) => [Number(row.master_id), row]));
+
+    baseRows = candidateMasters.map((row) => {
+      const masterId = Number(row.id);
+      const snapshot = fundamentalsByMasterId.get(masterId) || null;
+      const rawHistories = snapshot
+        ? {
+            ratios: buildPeriodRows("ratios", snapshot, { id: masterId }, snapshot.active_stock_id),
+            profit_loss: buildPeriodRows("profit_loss", snapshot, { id: masterId }, snapshot.active_stock_id),
+            cash_flow: buildPeriodRows("cash_flow", snapshot, { id: masterId }, snapshot.active_stock_id),
+            balance_sheet: buildPeriodRows("balance_sheet", snapshot, { id: masterId }, snapshot.active_stock_id),
+            shareholding: buildPeriodRows("shareholdings", snapshot, { id: masterId }, snapshot.active_stock_id),
+          }
+        : {
+            ratios: [],
+            profit_loss: [],
+            cash_flow: [],
+            balance_sheet: [],
+            shareholding: [],
+          };
+
+      return {
+        master_id: masterId,
+        symbol: row.symbol || null,
+        name: row.name || snapshot?.company || null,
+        company_name: snapshot?.company || row.name || null,
+        exchange: row.exchange || null,
+        market_cap: null,
+        current_price: null,
+        analysis: null,
+        analysis_metrics: {},
+        value_metrics: {},
+        ratio_history: rawHistories.ratios,
+        profit_loss_history: rawHistories.profit_loss,
+        cash_flow_history: rawHistories.cash_flow,
+        balance_history: rawHistories.balance_sheet,
+        shareholding_history: rawHistories.shareholding,
+        raw_histories: rawHistories,
+      };
+    });
+  }
+
+  const universeMasterIds = baseRows.map((row) => Number(row.master_id)).filter((value) => Number.isFinite(value) && value > 0);
   const [activeRows, candleRows] = await Promise.all([
-    activeStocksRepo.listByMasterIds(masterIds, db),
-    eodRepo.listRecentCandlesByMasterIds(masterIds, { limitPerMaster: 260, asOfDate }, db),
+    activeStocksRepo.listByMasterIds(universeMasterIds, db),
+    eodRepo.listRecentCandlesByMasterIds(universeMasterIds, { limitPerMaster: 260, asOfDate }, db),
   ]);
 
   const activeByMasterId = new Map(activeRows.map((row) => [Number(row.master_id), row]));
   const candlesByMasterId = new Map(
     Object.entries(groupByMasterId(candleRows)).map(([key, rows]) => [Number(key), rows]),
   );
+
+  return baseRows.map((row) => enrichRowForSearch(row, activeByMasterId, candlesByMasterId));
+};
+
+const fetchSplitRowsByMasterIds = async (tableName, masterIds = [], db = pool) => {
+  const ids = Array.from(new Set(masterIds.map(Number).filter((n) => Number.isFinite(n) && n > 0)));
+  if (!ids.length) return [];
+
+  const { rows } = await db.query(
+    `
+      SELECT *
+      FROM ${tableName}
+      WHERE master_id = ANY($1::bigint[])
+      ORDER BY master_id ASC, period_numeric ASC, id ASC
+    `,
+    [ids],
+  );
+
+  return rows;
+};
+
+const getSearchUniverseRowsFromSplit = async ({ asOfDate = null, masterIds = null } = {}, db = pool) => {
+  const allowedMasterIds = Array.isArray(masterIds)
+    ? new Set(masterIds.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0))
+    : null;
+
+  const masterRows = await stockMasterService.getAllMasterStocks();
+  const candidateMasters = masterRows.filter((row) => {
+    const masterId = Number(row?.id);
+    if (!Number.isFinite(masterId) || masterId <= 0) return false;
+    if (allowedMasterIds && !allowedMasterIds.has(masterId)) return false;
+    return row?.is_active === true && String(row?.screener_status || "").toUpperCase() === "VALID";
+  });
+
+  const candidateMasterIds = candidateMasters.map((row) => Number(row.id));
+  const [profitRows, balanceRows, cashRows, ratioRows, shareRows, activeRows, candleRows] = await Promise.all([
+    fetchSplitRowsByMasterIds("stock_fundamental_profit_loss_periods", candidateMasterIds, db),
+    fetchSplitRowsByMasterIds("stock_fundamental_balance_sheet_periods", candidateMasterIds, db),
+    fetchSplitRowsByMasterIds("stock_fundamental_cash_flow_periods", candidateMasterIds, db),
+    fetchSplitRowsByMasterIds("stock_fundamental_ratios_periods", candidateMasterIds, db),
+    fetchSplitRowsByMasterIds("stock_fundamental_shareholding_periods", candidateMasterIds, db),
+    activeStocksRepo.listByMasterIds(candidateMasterIds, db),
+    eodRepo.listRecentCandlesByMasterIds(candidateMasterIds, { limitPerMaster: 260, asOfDate }, db),
+  ]);
+
+  const profitByMaster = groupByMasterId(filterRowsByAsOfDate(profitRows, asOfDate));
+  const balanceByMaster = groupByMasterId(filterRowsByAsOfDate(balanceRows, asOfDate));
+  const cashByMaster = groupByMasterId(filterRowsByAsOfDate(cashRows, asOfDate));
+  const ratioByMaster = groupByMasterId(filterRowsByAsOfDate(ratioRows, asOfDate));
+  const shareByMaster = groupByMasterId(filterRowsByAsOfDate(shareRows, asOfDate));
+  const activeByMasterId = new Map(activeRows.map((row) => [Number(row.master_id), row]));
+  const candlesByMasterId = new Map(
+    Object.entries(groupByMasterId(candleRows)).map(([key, rows]) => [Number(key), rows]),
+  );
+
+  const baseRows = candidateMasters.map((row) => {
+    const masterId = Number(row.id);
+    return {
+      master_id: masterId,
+      symbol: row.symbol || null,
+      name: row.name || null,
+      company_name: row.name || null,
+      exchange: row.exchange || null,
+      market_cap: null,
+      current_price: null,
+      analysis: null,
+      analysis_metrics: {},
+      value_metrics: {},
+      ratio_history: ratioByMaster[String(masterId)] || [],
+      profit_loss_history: profitByMaster[String(masterId)] || [],
+      cash_flow_history: cashByMaster[String(masterId)] || [],
+      balance_history: balanceByMaster[String(masterId)] || [],
+      shareholding_history: shareByMaster[String(masterId)] || [],
+      raw_histories: {
+        ratios: ratioByMaster[String(masterId)] || [],
+        profit_loss: profitByMaster[String(masterId)] || [],
+        cash_flow: cashByMaster[String(masterId)] || [],
+        balance_sheet: balanceByMaster[String(masterId)] || [],
+        shareholding: shareByMaster[String(masterId)] || [],
+      },
+    };
+  });
 
   return baseRows.map((row) => enrichRowForSearch(row, activeByMasterId, candlesByMasterId));
 };
@@ -847,10 +1025,22 @@ const SEARCH_FIELDS = [
   makeNumberField("return_3m", "3 month return", ["3m return"], "3 month return > 15", "%"),
   makeNumberField("return_6m", "6 month return", ["6m return"], "6 month return > 20", "%"),
   makeNumberField("return_1y", "1 year return", ["1y return"], "1 year return > 25", "%"),
+  makeNumberField("dma_10", "10 DMA", ["10 ma"], "10 DMA > 100", "Rs"),
   makeNumberField("dma_20", "20 DMA", ["20 ma"], "20 DMA > 100", "Rs"),
   makeNumberField("dma_50", "50 DMA", ["50 ma"], "50 DMA > 100", "Rs"),
   makeNumberField("dma_100", "100 DMA", ["100 ma"], "100 DMA > 100", "Rs"),
   makeNumberField("dma_200", "200 DMA", ["200 ma"], "200 DMA > 100", "Rs"),
+  makeNumberField("dma_10_vs_dma_20", "DMA 10 vs DMA 20", ["10 dma vs 20 dma"], "DMA 10 vs DMA 20 > 0", "Rs"),
+  makeNumberField("dma_10_vs_dma_50", "DMA 10 vs DMA 50", ["10 dma vs 50 dma"], "DMA 10 vs DMA 50 > 0", "Rs"),
+  makeNumberField("dma_10_vs_dma_100", "DMA 10 vs DMA 100", ["10 dma vs 100 dma"], "DMA 10 vs DMA 100 > 0", "Rs"),
+  makeNumberField("dma_10_vs_dma_200", "DMA 10 vs DMA 200", ["10 dma vs 200 dma"], "DMA 10 vs DMA 200 > 0", "Rs"),
+  makeNumberField("dma_20_vs_dma_50", "DMA 20 vs DMA 50", ["20 dma vs 50 dma"], "DMA 20 vs DMA 50 > 0", "Rs"),
+  makeNumberField("dma_20_vs_dma_100", "DMA 20 vs DMA 100", ["20 dma vs 100 dma"], "DMA 20 vs DMA 100 > 0", "Rs"),
+  makeNumberField("dma_20_vs_dma_200", "DMA 20 vs DMA 200", ["20 dma vs 200 dma"], "DMA 20 vs DMA 200 > 0", "Rs"),
+  makeNumberField("dma_50_vs_dma_100", "DMA 50 vs DMA 100", ["50 dma vs 100 dma"], "DMA 50 vs DMA 100 > 0", "Rs"),
+  makeNumberField("dma_50_vs_dma_200", "DMA 50 vs DMA 200", ["50 dma vs 200 dma"], "DMA 50 vs DMA 200 > 0", "Rs"),
+  makeNumberField("dma_100_vs_dma_200", "DMA 100 vs DMA 200", ["100 dma vs 200 dma"], "DMA 100 vs DMA 200 > 0", "Rs"),
+  makeNumberField("price_vs_dma_10_percent", "Price vs 10 DMA", ["distance from 10 dma"], "Price vs 10 DMA > 0", "%"),
   makeNumberField("price_vs_dma_20_percent", "Price vs 20 DMA", ["distance from 20 dma"], "Price vs 20 DMA > 0", "%"),
   makeNumberField("price_vs_dma_50_percent", "Price vs 50 DMA", ["distance from 50 dma"], "Price vs 50 DMA > 0", "%"),
   makeNumberField("price_vs_dma_100_percent", "Price vs 100 DMA", ["distance from 100 dma"], "Price vs 100 DMA > 0", "%"),
@@ -863,6 +1053,7 @@ const SEARCH_FIELDS = [
   makeNumberField("eod_52_week_low", "EOD 52 week low", ["eod 52w low"], "EOD 52 week low > 20", "Rs"),
   makeNumberField("distance_from_52_week_high_percent", "Distance from 52 week high", ["distance from 52w high"], "Distance from 52 week high < 10", "%"),
   makeNumberField("distance_from_52_week_low_percent", "Distance from 52 week low", ["distance from 52w low"], "Distance from 52 week low < 20", "%"),
+  makeBooleanField("close_above_10_dma", "Close above 10 DMA", [], "Close above 10 DMA = yes"),
   makeBooleanField("close_above_20_dma", "Close above 20 DMA", [], "Close above 20 DMA = yes"),
   makeBooleanField("close_above_50_dma", "Close above 50 DMA", [], "Close above 50 DMA = yes"),
   makeBooleanField("close_above_200_dma", "Close above 200 DMA", [], "Close above 200 DMA = yes"),
@@ -881,7 +1072,7 @@ const suggestSearchFields = (query = "") => {
   }));
 };
 
-const searchStocks = async ({ query = "", limit = 50, asOfDate = null } = {}, db = pool) => {
+const searchStocks = async ({ query = "", limit = 50, asOfDate = null, masterIds = null } = {}, db = pool) => {
   const parsedClauses = parseQuery(query);
   if (!String(query || "").trim()) {
     return { query, parsed: [], total: 0, rows: [], suggestions: [] };
@@ -889,14 +1080,19 @@ const searchStocks = async ({ query = "", limit = 50, asOfDate = null } = {}, db
 
   const preparedClauses = parsedClauses.map((clause) => {
     const field = resolveFieldCandidates(clause.fieldText)[0] || null;
+    const expectedField =
+      clause.valueText && !/^-?\d+(\.\d+)?$/.test(String(clause.valueText).trim())
+        ? resolveFieldCandidates(clause.valueText)[0] || null
+        : null;
     return {
       ...clause,
       field,
-      valid: Boolean(field && clause.operator && clause.valueText !== null),
+      expectedField,
+      valid: Boolean(field && clause.operator && (clause.valueText !== null || expectedField)),
     };
   });
 
-  const rows = await getSearchUniverseRows({ asOfDate }, db);
+  const rows = await getSearchUniverseRows({ asOfDate, masterIds }, db);
   const maxRows = Math.max(1, Math.min(100, Number(limit) || 50));
   const rankedRows = rows
     .map((row) => {
@@ -915,14 +1111,17 @@ const searchStocks = async ({ query = "", limit = 50, asOfDate = null } = {}, db
         }
 
         const actual = clause.field.getValue(row);
-        const matched = compare(clause.field, actual, clause.operator, clause.valueText);
+        const matched = compare(clause.field, actual, clause.operator, clause.valueText, clause.expectedField, row);
+        const rightActual = clause.expectedField ? clause.expectedField.getValue(row) : null;
         return {
           field: clause.field.label,
           key: clause.field.key,
           operator: clause.operator,
-          threshold: clause.valueText,
+          threshold: clause.expectedField?.label || clause.valueText,
           actual,
           formattedActual: formatValue(clause.field, actual),
+          right_actual: rightActual,
+          formattedRightActual: clause.expectedField ? formatValue(clause.expectedField, rightActual) : null,
           status: matched ? "match" : "miss",
           reason: matched ? `${clause.field.label} matched` : `${clause.field.label} did not match`,
         };
@@ -942,6 +1141,8 @@ const searchStocks = async ({ query = "", limit = 50, asOfDate = null } = {}, db
             valueText: clause.valueText,
             key: clause.field?.key || null,
             label: clause.field?.label || null,
+            expectedKey: clause.expectedField?.key || null,
+            expectedLabel: clause.expectedField?.label || null,
             valid: clause.valid,
           })),
           matches,
@@ -970,6 +1171,117 @@ const searchStocks = async ({ query = "", limit = 50, asOfDate = null } = {}, db
       valueText: clause.valueText,
       key: clause.field?.key || null,
       label: clause.field?.label || null,
+      expectedKey: clause.expectedField?.key || null,
+      expectedLabel: clause.expectedField?.label || null,
+      valid: clause.valid,
+    })),
+    total,
+    rows: matchedRows,
+    suggestions: suggestSearchFields(query),
+  };
+};
+
+const searchStocksUsingSplitData = async ({ query = "", limit = 50, asOfDate = null, masterIds = null } = {}, db = pool) => {
+  const parsedClauses = parseQuery(query);
+  if (!String(query || "").trim()) {
+    return { query, parsed: [], total: 0, rows: [], suggestions: [] };
+  }
+
+  const preparedClauses = parsedClauses.map((clause) => {
+    const field = resolveFieldCandidates(clause.fieldText)[0] || null;
+    const expectedField =
+      clause.valueText && !/^-?\d+(\.\d+)?$/.test(String(clause.valueText).trim())
+        ? resolveFieldCandidates(clause.valueText)[0] || null
+        : null;
+    return {
+      ...clause,
+      field,
+      expectedField,
+      valid: Boolean(field && clause.operator && (clause.valueText !== null || expectedField)),
+    };
+  });
+
+  const rows = await getSearchUniverseRowsFromSplit({ asOfDate, masterIds }, db);
+  const maxRows = Math.max(1, Math.min(100, Number(limit) || 50));
+  const rankedRows = rows
+    .map((row) => {
+      const matches = preparedClauses.map((clause) => {
+        if (!clause.field || !clause.operator) {
+          return {
+            field: clause.fieldText,
+            key: null,
+            operator: clause.operator,
+            threshold: clause.valueText,
+            actual: null,
+            formattedActual: "?",
+            status: "invalid",
+            reason: "Unknown field or incomplete clause",
+          };
+        }
+
+        const actual = clause.field.getValue(row);
+        const matched = compare(clause.field, actual, clause.operator, clause.valueText, clause.expectedField, row);
+        const rightActual = clause.expectedField ? clause.expectedField.getValue(row) : null;
+        return {
+          field: clause.field.label,
+          key: clause.field.key,
+          operator: clause.operator,
+          threshold: clause.expectedField?.label || clause.valueText,
+          actual,
+          formattedActual: formatValue(clause.field, actual),
+          right_actual: rightActual,
+          formattedRightActual: clause.expectedField ? formatValue(clause.expectedField, rightActual) : null,
+          status: matched ? "match" : "miss",
+          reason: matched ? `${clause.field.label} matched` : `${clause.field.label} did not match`,
+        };
+      });
+
+      const matched = matches.every((item) => item.status === "match");
+      return {
+        ...row,
+        market_cap: row.search_metrics?.market_cap ?? row.market_cap ?? null,
+        current_price: row.search_metrics?.current_price ?? row.current_price ?? null,
+        search: {
+          query,
+          clauses: preparedClauses.map((clause) => ({
+            raw: clause.raw,
+            fieldText: clause.fieldText,
+            operator: clause.operator,
+            valueText: clause.valueText,
+            key: clause.field?.key || null,
+            label: clause.field?.label || null,
+            expectedKey: clause.expectedField?.key || null,
+            expectedLabel: clause.expectedField?.label || null,
+            valid: clause.valid,
+          })),
+          matches,
+          matched,
+          matched_count: matches.filter((item) => item.status === "match").length,
+        },
+      };
+    })
+    .filter((row) => row.search?.matched)
+    .sort((a, b) => {
+      const scoreA = Number(a.analysis?.score || 0);
+      const scoreB = Number(b.analysis?.score || 0);
+      if (scoreB !== scoreA) return scoreB - scoreA;
+      return (toNumber(b.market_cap) || 0) - (toNumber(a.market_cap) || 0);
+    });
+
+  const total = rankedRows.length;
+  const matchedRows = rankedRows.slice(0, maxRows);
+
+  return {
+    query,
+    parsed: preparedClauses.map((clause) => ({
+      raw: clause.raw,
+      fieldText: clause.fieldText,
+      operator: clause.operator,
+      valueText: clause.valueText,
+      key: clause.field?.key || null,
+      label: clause.field?.label || null,
+      expectedKey: clause.expectedField?.key || null,
+      expectedLabel: clause.expectedField?.label || null,
       valid: clause.valid,
     })),
     total,
@@ -982,4 +1294,5 @@ module.exports = {
   SEARCH_FIELDS,
   suggestSearchFields,
   searchStocks,
+  searchStocksUsingSplitData,
 };

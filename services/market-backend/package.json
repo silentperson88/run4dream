@@ -21,6 +21,8 @@
     "worker:fundamentals:ratios:test": "node src/workers/fundamentals.split.worker.js --section=ratios --once",
     "worker:fundamentals:shareholding": "node src/workers/fundamentals.split.worker.js --section=shareholdings",
     "worker:fundamentals:shareholding:test": "node src/workers/fundamentals.split.worker.js --section=shareholdings --once",
+    "worker:fundamentals:split:all": "node src/workers/fundamentals.split.all.worker.js",
+    "worker:fundamentals:split:all:test": "node src/workers/fundamentals.split.all.worker.js --once",
     "worker:fundamentals:pending": "node src/workers/fundamentals.parallel.worker.js --mode=pending",
     "worker:fundamentals:failed": "node src/workers/fundamentals.parallel.worker.js --mode=failed",
     "worker:fundamentals:pending-failed": "node src/workers/fundamentals.parallel.worker.js --mode=pending,failed",
