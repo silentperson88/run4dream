@@ -37,7 +37,10 @@
     "worker:active-stocks:price-refresh:test": "node src/workers/active-stocks.price-refresh.worker.js --once",
     "sync:eq:auto-activate": "node src/scripts/auto-activate-eq.script.js",
     "sync:eod:missing-history": "node src/scripts/fetch-missing-eod-history.script.js",
-    "sync:eod:remap-master-id": "node src/scripts/eod.remap-master-id.script.js"
+    "sync:eod:remap-master-id": "node src/scripts/eod.remap-master-id.script.js",
+    "worker:eod:derived": "node src/workers/eod.derived-metrics.worker.js",
+    "worker:eod:derived:test": "node src/workers/eod.derived-metrics.worker.js --once",
+    "worker:eod:derived:dry-run": "node src/workers/eod.derived-metrics.worker.js --dry-run --once"
   },
   "author": "",
   "license": "ISC",
