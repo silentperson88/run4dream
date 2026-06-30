@@ -8,8 +8,11 @@ const normalizeOrder = (row = {}) => ({
   order_price: toNumber(row.order_price),
   avg_execution_price: toNumber(row.avg_execution_price),
   realized_pl: toNumber(row.realized_pl),
+  max_partial_executions: Number(row.max_partial_executions || 0),
   executions: ensureArray(row.executions),
   sell_allocation: ensureArray(row.sell_allocation),
+  simulation_mode: row.simulation_mode || "LIVE",
+  simulated_trade_date: row.simulated_trade_date || null,
 });
 
 const create = async (payload, db = pool) => {
@@ -18,12 +21,15 @@ const create = async (payload, db = pool) => {
       INSERT INTO orders (
         user_id, portfolio_id, active_stock_id, symbol, exchange,
         type, order_type, order_price, order_quantity, executed_quantity,
-        remaining_quantity, avg_execution_price, status, executions, realized_pl
+        remaining_quantity, avg_execution_price, status, executions, realized_pl,
+        max_partial_executions, sell_allocation, simulation_mode, simulated_trade_date,
+        created_at, updated_at
       )
       VALUES (
         $1, $2, $3, $4, $5,
         $6, $7, $8, $9, $10,
-        $11, $12, $13, $14::jsonb, $15
+        $11, $12, $13, $14::jsonb, $15,
+        $16, $17::jsonb, $18, $19, NOW(), NOW()
       )
       RETURNING *
     `,
@@ -43,6 +49,10 @@ const create = async (payload, db = pool) => {
       payload.status,
       JSON.stringify(ensureArray(payload.executions)),
       toNumber(payload.realized_pl),
+      Number(payload.max_partial_executions ?? 5),
+      JSON.stringify(ensureArray(payload.sell_allocation)),
+      payload.simulation_mode || "LIVE",
+      payload.simulated_trade_date || null,
     ],
   );
 

@@ -1,9 +1,24 @@
 require("dotenv").config();
-require("../config/db");
-
-const { pool, dbReady } = require("../config/db");
+process.env.PG_AUTO_MIGRATE = "false";
+const { Pool } = require("pg");
 const eodRepository = require("../repositories/eod.repository");
-const { computeDerivedMetricsForCandles, toTradeDateKey } = require("../services/eodDerivedMetrics.service");
+const {
+  computeDerivedMetricsForCandles,
+  toTradeDateKey,
+} = require("../services/eodDerivedMetrics.service");
+const stockMasterRepository = require("../repositories/stockMaster.repository");
+
+const DATABASE_URL = process.env.PG_DATABASE_URL;
+if (!DATABASE_URL) {
+  throw new Error("PG_DATABASE_URL is required");
+}
+
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: process.env.PG_SSL === "true" ? { rejectUnauthorized: false } : false,
+});
+
+const dbReady = pool.query("SELECT 1");
 
 const argv = process.argv.slice(2);
 
@@ -19,6 +34,11 @@ const readArg = (...names) => {
 const hasFlag = (...names) =>
   names.some((name) => argv.includes(`--${name}`) || argv.includes(`--${name}=true`));
 
+const toPositiveNumber = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : null;
+};
+
 const parseEodId = (value) => {
   if (!value) return { masterId: null, tradeDate: null };
   const [masterIdRaw, tradeDateRaw] = String(value).split(":");
@@ -33,8 +53,10 @@ const parseEodId = (value) => {
 const eodId = parseEodId(readArg("eod-id", "row-id"));
 
 const runtime = {
-  masterId: Number(readArg("master-id", "stock-id", "id") || eodId.masterId || 0) || null,
+  masterId: toPositiveNumber(readArg("master-id", "stock-id", "id")) || eodId.masterId,
   tradeDate: readArg("trade-date", "date") || eodId.tradeDate || null,
+  fromId: toPositiveNumber(readArg("from-id", "from-master-id")),
+  toId: toPositiveNumber(readArg("to-id", "to-master-id")),
   batchSize: Math.max(1, Math.min(100, Number(readArg("batch-size") || process.env.EOD_DERIVED_BATCH_SIZE || 25))),
   updateChunkSize: Math.max(
     50,
@@ -42,7 +64,6 @@ const runtime = {
   ),
   shardCount: Math.max(1, Number(readArg("shards") || process.env.EOD_DERIVED_SHARDS || 1)),
   shardIndex: Math.max(0, Number(readArg("shard-index") || process.env.EOD_DERIVED_SHARD_INDEX || 0)),
-  fromMasterId: Math.max(0, Number(readArg("from-master-id") || 0)),
   limitStocks: Math.max(0, Number(readArg("limit-stocks") || 0)),
   once: hasFlag("once", "single", "test"),
   dryRun: hasFlag("dry-run"),
@@ -52,15 +73,9 @@ if (runtime.shardIndex >= runtime.shardCount) {
   throw new Error("--shard-index must be less than --shards");
 }
 
-const groupCandlesByMasterId = (rows = []) => {
-  const grouped = new Map();
-  for (const row of rows) {
-    const key = Number(row.master_id);
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push(row);
-  }
-  return grouped;
-};
+if (runtime.fromId && runtime.toId && runtime.fromId > runtime.toId) {
+  throw new Error("--from-id must be less than or equal to --to-id");
+}
 
 const sliceUpdateRows = (rows = []) => {
   if (!runtime.tradeDate) return rows;
@@ -79,39 +94,27 @@ const updateInChunks = async (rows = []) => {
   return updated;
 };
 
-const processMasterIds = async (masterIds = []) => {
-  if (!masterIds.length) {
-    return {
-      processedStocks: 0,
-      updatedRows: 0,
-    };
+const processMasterId = async (masterId) => {
+  const candles = await eodRepository.listAllCandlesByMasterIds([masterId], pool);
+  if (!candles.length) {
+    console.log(`[stock skip] master_id=${masterId} no_eod_rows`);
+    return { processedStocks: 0, updatedRows: 0 };
   }
 
-  const rows = await eodRepository.listAllCandlesByMasterIds(masterIds, pool);
-  const grouped = groupCandlesByMasterId(rows);
+  const computed = computeDerivedMetricsForCandles(candles);
+  const targetRows = sliceUpdateRows(computed);
+  const updatedRows = await updateInChunks(targetRows);
 
-  let updatedRows = 0;
-  let processedStocks = 0;
+  const firstDate = candles[0]?.trade_date ? toTradeDateKey(candles[0].trade_date) : "-";
+  const lastDate = candles[candles.length - 1]?.trade_date
+    ? toTradeDateKey(candles[candles.length - 1].trade_date)
+    : "-";
 
-  for (const masterId of masterIds) {
-    const candles = grouped.get(Number(masterId)) || [];
-    if (!candles.length) continue;
+  console.log(
+    `[stock] master_id=${masterId} candles=${candles.length} range=${firstDate}..${lastDate} updated=${targetRows.length}${runtime.dryRun ? " dry-run" : ""}`,
+  );
 
-    const computed = computeDerivedMetricsForCandles(candles);
-    const targetRows = sliceUpdateRows(computed);
-    updatedRows += await updateInChunks(targetRows);
-    processedStocks += 1;
-
-    const firstDate = candles[0]?.trade_date ? toTradeDateKey(candles[0].trade_date) : "-";
-    const lastDate = candles[candles.length - 1]?.trade_date
-      ? toTradeDateKey(candles[candles.length - 1].trade_date)
-      : "-";
-    console.log(
-      `[stock ${processedStocks}/${masterIds.length}] master_id=${masterId} candles=${candles.length} range=${firstDate}..${lastDate} updated=${targetRows.length}${runtime.dryRun ? " dry-run" : ""}`,
-    );
-  }
-
-  return { processedStocks, updatedRows };
+  return { processedStocks: 1, updatedRows };
 };
 
 const runSingleTarget = async () => {
@@ -119,7 +122,7 @@ const runSingleTarget = async () => {
     throw new Error("Single-target mode requires --master-id or --eod-id");
   }
 
-  const result = await processMasterIds([runtime.masterId]);
+  const result = await processMasterId(runtime.masterId);
   console.log("Single-target derived metrics completed", {
     masterId: runtime.masterId,
     tradeDate: runtime.tradeDate,
@@ -128,22 +131,27 @@ const runSingleTarget = async () => {
   });
 };
 
-const runBatchMode = async () => {
-  let afterMasterId = runtime.fromMasterId;
+const runRangeMode = async () => {
+  const baseAfterMasterId = runtime.fromId ? runtime.fromId - 1 : 0;
+  let afterMasterId = baseAfterMasterId;
   let totalProcessedStocks = 0;
   let totalUpdatedRows = 0;
 
   while (true) {
     if (runtime.limitStocks && totalProcessedStocks >= runtime.limitStocks) break;
 
-    const remaining = runtime.limitStocks ? Math.max(runtime.limitStocks - totalProcessedStocks, 0) : runtime.batchSize;
-    const limit = runtime.limitStocks ? Math.min(runtime.batchSize, remaining) : runtime.batchSize;
-    if (limit <= 0) break;
+    const remaining = runtime.limitStocks
+      ? Math.max(runtime.limitStocks - totalProcessedStocks, 0)
+      : runtime.batchSize;
+    const batchLimit = runtime.limitStocks ? Math.min(runtime.batchSize, remaining) : runtime.batchSize;
+    if (batchLimit <= 0) break;
 
-    const masterIds = await eodRepository.listMasterIdsForDerivedMetrics(
+    const masterIds = await stockMasterRepository.listEligibleMasterIdsForDerivedMetrics(
       {
         afterMasterId,
-        limit,
+        fromId: runtime.fromId,
+        toId: runtime.toId,
+        limit: batchLimit,
         shardCount: runtime.shardCount,
         shardIndex: runtime.shardIndex,
       },
@@ -152,16 +160,18 @@ const runBatchMode = async () => {
 
     if (!masterIds.length) break;
 
-    const result = await processMasterIds(masterIds);
-    totalProcessedStocks += result.processedStocks;
-    totalUpdatedRows += result.updatedRows;
-    afterMasterId = masterIds[masterIds.length - 1];
+    for (const masterId of masterIds) {
+      if (runtime.limitStocks && totalProcessedStocks >= runtime.limitStocks) break;
+      const result = await processMasterId(masterId);
+      totalProcessedStocks += result.processedStocks;
+      totalUpdatedRows += result.updatedRows;
+      afterMasterId = masterId;
+    }
 
     console.log("Batch progress", {
       shard: `${runtime.shardIndex}/${runtime.shardCount}`,
       lastMasterId: afterMasterId,
-      batchStocks: result.processedStocks,
-      batchUpdatedRows: result.updatedRows,
+      batchStocks: masterIds.length,
       totalProcessedStocks,
       totalUpdatedRows,
       dryRun: runtime.dryRun,
@@ -172,7 +182,8 @@ const runBatchMode = async () => {
 
   console.log("Derived metrics worker completed", {
     shard: `${runtime.shardIndex}/${runtime.shardCount}`,
-    fromMasterId: runtime.fromMasterId,
+    fromId: runtime.fromId || null,
+    toId: runtime.toId || null,
     limitStocks: runtime.limitStocks || null,
     batchSize: runtime.batchSize,
     updateChunkSize: runtime.updateChunkSize,
@@ -188,11 +199,12 @@ const run = async () => {
   console.log("Starting EOD derived metrics worker", {
     masterId: runtime.masterId,
     tradeDate: runtime.tradeDate,
+    fromId: runtime.fromId || null,
+    toId: runtime.toId || null,
     batchSize: runtime.batchSize,
     updateChunkSize: runtime.updateChunkSize,
     shardCount: runtime.shardCount,
     shardIndex: runtime.shardIndex,
-    fromMasterId: runtime.fromMasterId,
     limitStocks: runtime.limitStocks || null,
     once: runtime.once,
     dryRun: runtime.dryRun,
@@ -203,7 +215,7 @@ const run = async () => {
     return;
   }
 
-  await runBatchMode();
+  await runRangeMode();
 };
 
 run()

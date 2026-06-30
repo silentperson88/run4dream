@@ -169,6 +169,20 @@ async function archivePortfolio(req, res) {
   }
 }
 
+async function updateBacktestMeta(req, res) {
+  try {
+    const data = await portfolioService.updateBacktestPortfolioMeta({
+      user_id: req.user.id,
+      portfolio_id: req.params.portfolioId,
+      meta: req.body.meta || {},
+    });
+
+    return response(res, 200, MESSAGES.COMMON.SUCCESS, data);
+  } catch (err) {
+    return response(res, 400, err.message);
+  }
+}
+
 module.exports = {
   createPortfolio,
   getPortfolios,
@@ -180,4 +194,5 @@ module.exports = {
   getAllPortfoliosSummary,
   getPortfolioSummary,
   archivePortfolio,
+  updateBacktestMeta,
 };

@@ -16,6 +16,40 @@ exports.createPortfolioValidator = [
     .optional()
     .isFloat({ min: 0 })
     .withMessage("initial_fund must be 0 or greater"),
+
+  body("meta")
+    .optional()
+    .isObject()
+    .withMessage("meta must be an object"),
+
+  body("meta.as_of_date")
+    .optional()
+    .isISO8601()
+    .withMessage("meta.as_of_date must be a valid date"),
+
+  body("meta.query")
+    .optional()
+    .isString()
+    .withMessage("meta.query must be a string"),
+
+  body("meta.watchlist_master_ids")
+    .optional()
+    .isArray()
+    .withMessage("meta.watchlist_master_ids must be an array"),
+];
+
+exports.updateBacktestMetaValidator = [
+  body("meta")
+    .exists()
+    .withMessage("meta is required")
+    .bail()
+    .isObject()
+    .withMessage("meta must be an object"),
+
+  body("meta.enabled_versions")
+    .optional()
+    .isArray()
+    .withMessage("meta.enabled_versions must be an array"),
 ];
 
 /* ---------------- PARAM ---------------- */

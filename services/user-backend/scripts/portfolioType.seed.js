@@ -2,6 +2,22 @@ const { pool } = require("../src/config/db");
 
 const portfolioTypes = [
   {
+    code: "BACKTESTING",
+    display_name: "Backtesting Portfolio",
+    description:
+      "Create a historical trading portfolio using an as-of date, saved query, and a watchlist of past market candidates.",
+    fund: 100000,
+    risk_level: "NONE",
+    rules_json: {
+      mode: "BACKTEST",
+    },
+    important_notes: [
+      "This portfolio is for historical simulation, not live execution.",
+      "You can save an as-of date and the screener query that produced the trade ideas.",
+      "Watchlist stocks are stored as master IDs for replay and review.",
+    ],
+  },
+  {
     code: "MANUAL",
     display_name: "Manual Portfolio",
     description: "Trade freely with no restrictions. Best for experienced users.",
@@ -102,32 +118,56 @@ const portfolioTypes = [
 
 async function seedPortfolioTypes(client = pool) {
   for (const type of portfolioTypes) {
+    const values = [
+      type.code,
+      type.display_name,
+      type.description,
+      type.fund,
+      type.risk_level,
+      JSON.stringify(type.rules_json || {}),
+      JSON.stringify(type.important_notes || []),
+    ];
+
+    const existing = await client.query(
+      `
+        SELECT id
+        FROM portfolio_type
+        WHERE code = $1
+        ORDER BY id ASC
+        LIMIT 1
+      `,
+      [type.code],
+    );
+
+    if (existing.rowCount > 0) {
+      await client.query(
+        `
+          UPDATE portfolio_type
+          SET
+            display_name = $2,
+            description = $3,
+            fund = $4,
+            risk_level = $5,
+            rules_json = $6::jsonb,
+            important_notes = $7::jsonb,
+            is_active = TRUE,
+            updated_at = NOW()
+          WHERE id = $1
+        `,
+        [existing.rows[0].id, ...values.slice(1)],
+      );
+      continue;
+    }
+
     await client.query(
       `
         INSERT INTO portfolio_type (
-          code, display_name, description, fund, risk_level, rules_json, important_notes, is_active
+          code, display_name, description, fund, risk_level,
+          rules_json, important_notes, is_active, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, TRUE)
-        ON CONFLICT (code)
-        DO UPDATE SET
-          display_name = EXCLUDED.display_name,
-          description = EXCLUDED.description,
-          fund = EXCLUDED.fund,
-          risk_level = EXCLUDED.risk_level,
-          rules_json = EXCLUDED.rules_json,
-          important_notes = EXCLUDED.important_notes,
-          is_active = EXCLUDED.is_active,
-          updated_at = NOW()
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, TRUE, NOW(), NOW())
       `,
-      [
-        type.code,
-        type.display_name,
-        type.description,
-        type.fund,
-        type.risk_level,
-        JSON.stringify(type.rules_json || {}),
-        JSON.stringify(type.important_notes || []),
-      ],
+      values,
     );
   }
 

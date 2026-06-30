@@ -8,6 +8,7 @@ const {
   createPortfolioValidator,
   portfolioIdParamValidator,
   activeStockIdParamValidator,
+  updateBacktestMetaValidator,
 } = require("../validator/userPortfolio.validator");
 
 router.post(
@@ -73,6 +74,15 @@ router.get(
   activeStockIdParamValidator,
   validate,
   controller.getHoldingsByActiveStock,
+);
+
+router.patch(
+  "/:portfolioId/backtest-meta",
+  authMiddleware,
+  portfolioIdParamValidator,
+  updateBacktestMetaValidator,
+  validate,
+  controller.updateBacktestMeta,
 );
 
 router.patch(

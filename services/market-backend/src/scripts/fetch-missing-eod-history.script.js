@@ -7,8 +7,9 @@ const eodRepo = require("../repositories/eod.repository");
 
 const DELAY_MS = Number(process.env.EOD_HISTORY_DELAY_MS || 20_000);
 const CLI_ARGS = process.argv.slice(2);
-const HAS_TODAY_FLAG = CLI_ARGS.includes("--today");
 const FROM_DATE = process.env.EOD_HISTORY_FROM_DATE || "2007-01-01";
+const MASTER_ID_ARG = CLI_ARGS.find((arg) => arg.startsWith("--master-id="));
+const TARGET_MASTER_ID = MASTER_ID_ARG ? Number(MASTER_ID_ARG.split("=")[1]) : null;
 
 const getIndiaNowParts = () => {
   const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -44,12 +45,7 @@ const addDaysToIso = (isoDate, days) => {
 
 const INDIA_NOW = getIndiaNowParts();
 const TODAY_ISO = INDIA_NOW.dateIso;
-const RUNTIME_TODATE = HAS_TODAY_FLAG ? TODAY_ISO : process.env.EOD_HISTORY_TO_DATE || TODAY_ISO;
-const TO_DATE =
-  RUNTIME_TODATE === TODAY_ISO &&
-  (INDIA_NOW.hour < 15 || (INDIA_NOW.hour === 15 && INDIA_NOW.minute < 30))
-    ? addDaysToIso(TODAY_ISO, -1)
-    : RUNTIME_TODATE;
+const TO_DATE = addDaysToIso(TODAY_ISO, -1);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -87,13 +83,14 @@ async function fetchHistoryForStock(masterId) {
     );
   }
 
-  if (String(master.eod_history_status || "").toUpperCase() === "NO_EOD_DATA") {
+if (String(master.eod_history_status || "").toUpperCase() === "NO_EOD_DATA") {
     return {
       skipped: true,
       statusUpdatedTo: "NO_EOD_DATA",
       count: 0,
       chunks: 0,
       latestStoredDate: null,
+      effectiveFromDate: null,
       message: "Skipped because stock is marked as NO_EOD_DATA",
     };
   }
@@ -136,13 +133,14 @@ async function fetchHistoryForStock(masterId) {
     count: Number(result?.count || 0),
     chunks: Array.isArray(result?.chunks) ? result.chunks.length : 0,
     latestStoredDate: result?.latestStoredDate || null,
+    effectiveFromDate: result?.effectiveFromDate || null,
     message: result?.message || "",
   };
 }
 
 async function run() {
   console.log(
-    `Starting missing EOD history fetch (direct service mode). fromDate=${FROM_DATE}, toDate=${TO_DATE}, delayMs=${DELAY_MS}, useToday=${HAS_TODAY_FLAG}, marketGuardApplied=${RUNTIME_TODATE !== TO_DATE}, indiaNow=${TODAY_ISO} ${String(INDIA_NOW.hour).padStart(2, "0")}:${String(INDIA_NOW.minute).padStart(2, "0")}:${String(INDIA_NOW.second).padStart(2, "0")}`,
+    `Starting missing EOD history fetch (direct service mode). fallbackFromDate=${FROM_DATE}, toDate=${TO_DATE}, delayMs=${DELAY_MS}, targetMasterId=${Number.isFinite(TARGET_MASTER_ID) ? TARGET_MASTER_ID : "ALL"}, indiaNow=${TODAY_ISO} ${String(INDIA_NOW.hour).padStart(2, "0")}:${String(INDIA_NOW.minute).padStart(2, "0")}:${String(INDIA_NOW.second).padStart(2, "0")}`,
   );
 
   const masterStocks = await masterService.getAllMasterStocks();
@@ -156,16 +154,20 @@ async function run() {
       String(row?.eod_history_status || "").toUpperCase() !== "NO_EOD_DATA"
     );
   });
+  const filteredEligibleStocks = Number.isFinite(TARGET_MASTER_ID)
+    ? eligibleStocks.filter((row) => Number(row.id) === TARGET_MASTER_ID)
+    : eligibleStocks;
+
   console.log(
-    `Eligible stocks (master active + angelone fetched + VALID + not NO_EOD_DATA): ${eligibleStocks.length}`,
+    `Eligible stocks (master active + angelone fetched + VALID + not NO_EOD_DATA): ${filteredEligibleStocks.length}`,
   );
 
   const latestByMasterId = await eodRepo.getLatestTradeDatesByMasterIds(
-    eligibleStocks.map((row) => row.id),
+    filteredEligibleStocks.map((row) => row.id),
   );
 
   const targets = getMissingHistoryStocks(
-    eligibleStocks.map((row) => ({
+    filteredEligibleStocks.map((row) => ({
       ...row,
       master_id: row.id,
       latestTradeDate: latestByMasterId.get(Number(row.id)) || null,
@@ -189,7 +191,7 @@ async function run() {
 
     try {
       console.log(
-        `\n[${i + 1}/${targets.length}] Fetching EOD history for ${label} | from=${FROM_DATE} | to=${TO_DATE}`,
+        `\n[${i + 1}/${targets.length}] Fetching EOD history for ${label} | fallbackFrom=${FROM_DATE} | to=${TO_DATE} | latestStored=${row.latestTradeDate || "-"}`,
       );
       const result = await fetchHistoryForStock(masterId);
       if (result.skipped) {
@@ -198,7 +200,7 @@ async function run() {
         success += 1;
       }
       console.log(
-        `${result.skipped ? "Skipped" : "Done"} ${label}: from=${FROM_DATE}, to=${TO_DATE}, count=${result.count}, chunks=${result.chunks}, latestStoredDate=${result.latestStoredDate || "-"}, eodHistoryStatus=${result.statusUpdatedTo || "-"}`,
+        `${result.skipped ? "Skipped" : "Done"} ${label}: fallbackFrom=${FROM_DATE}, to=${TO_DATE}, count=${result.count}, chunks=${result.chunks}, latestStoredDate=${result.latestStoredDate || "-"}, effectiveFromDate=${result.effectiveFromDate || "-"}, eodHistoryStatus=${result.statusUpdatedTo || "-"}`,
       );
     } catch (error) {
       failed += 1;

@@ -9,6 +9,7 @@ const normalizePortfolio = (row = {}) => ({
   available_fund: toNumber(row.available_fund),
   holdings: ensureArray(row.holdings),
   lock_fund: ensureArray(row.lock_fund),
+  meta: row.meta && typeof row.meta === "object" ? row.meta : {},
 });
 
 const getActiveById = async (portfolioId, userId, db = pool, { forUpdate = false } = {}) => {
@@ -55,14 +56,17 @@ const findActiveByUserAndName = async (userId, name, db = pool) => {
   return rows[0] ? normalizePortfolio(rows[0]) : null;
 };
 
-const create = async ({ user_id, portfolio_type_id, name, initial_fund, available_fund }, db = pool) => {
+const create = async (
+  { user_id, portfolio_type_id, name, initial_fund, available_fund, meta = {} },
+  db = pool,
+) => {
   const { rows } = await db.query(
     `
       INSERT INTO user_portfolios (
         user_id, portfolio_type_id, name, initial_fund, available_fund,
-        status, holdings, lock_fund
+        status, holdings, lock_fund, meta, created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, 'ACTIVE', '[]'::jsonb, '[]'::jsonb)
+      VALUES ($1, $2, $3, $4, $5, 'ACTIVE', '[]'::jsonb, '[]'::jsonb, $6::jsonb, NOW(), NOW())
       RETURNING *
     `,
     [
@@ -71,6 +75,7 @@ const create = async ({ user_id, portfolio_type_id, name, initial_fund, availabl
       name,
       toNumber(initial_fund),
       toNumber(available_fund),
+      JSON.stringify(meta || {}),
     ],
   );
 
@@ -93,7 +98,7 @@ const listActiveByUser = async (userId, db = pool) => {
 
 const updateFinancialState = async (
   portfolioId,
-  { available_fund, holdings, lock_fund, initial_fund },
+  { available_fund, holdings, lock_fund, initial_fund, meta },
   db = pool,
 ) => {
   const values = [Number(portfolioId)];
@@ -117,6 +122,11 @@ const updateFinancialState = async (
   if (initial_fund !== undefined) {
     values.push(toNumber(initial_fund));
     sets.push(`initial_fund = $${values.length}`);
+  }
+
+  if (meta !== undefined) {
+    values.push(JSON.stringify(meta || {}));
+    sets.push(`meta = $${values.length}::jsonb`);
   }
 
   if (!sets.length) {

@@ -891,7 +891,7 @@ exports.searchStocks = async (req, res) => {
     const query = String(req.query?.q || "").trim();
     const limit = Math.max(1, Math.min(100, Number(req.query?.limit || 50)));
     const asOfDate = getAsOfDateFromRequest(req);
-    const result = await stockSearchService.searchStocks({ query, limit, asOfDate });
+    const result = await stockSearchService.searchFundamentalsSnapshot({ query, limit, asOfDate });
     return response(res, 200, responseUtils.SUCCESS, {
       ...result,
       filters: {

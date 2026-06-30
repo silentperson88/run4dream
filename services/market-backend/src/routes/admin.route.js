@@ -24,7 +24,7 @@ const { createEodFromRedis } = require("../controllers/eodAdmin.controller");
 const requireSuperAdmin = require("../middleware.js/requireSuperAdmin.middleware");
 
 // handle login using totp
-router.post("/smart-login", requireSuperAdmin, loginWithTOTP);
+router.post("/smart-login", loginWithTOTP);
 
 // check login status
 router.get("/server-status", checkLoginStatus);

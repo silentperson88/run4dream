@@ -51,6 +51,18 @@ exports.getMasterStockByName = async (name) => stockMasterRepo.getByName(name);
 
 exports.getAllMasterStocks = async () => stockMasterRepo.listActive();
 
+exports.getEligibleEodSearchMasters = async (masterIds = null, db) =>
+  stockMasterRepo.listEligibleForEodSearch(masterIds, db);
+
+exports.getEligibleDailyFullEodMasters = async (masterIds = null, db) =>
+  stockMasterRepo.listEligibleForDailyFullEod(masterIds, db);
+
+exports.getEligibleHistoricalUniversePassedMasters = async (db) =>
+  stockMasterRepo.listEligibleHistoricalUniversePassed(db);
+
+exports.bulkUpdateHistoricalUniverseState = async (rows = [], db) =>
+  stockMasterRepo.bulkUpdateHistoricalUniverseState(rows, db);
+
 exports.canFetchScreener = (stock) => {
   if (!stock) return false;
   return (

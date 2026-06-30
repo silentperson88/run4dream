@@ -1,0 +1,3 @@
+ALTER TABLE eod
+  ADD COLUMN IF NOT EXISTS lower_circuit NUMERIC(18, 6),
+  ADD COLUMN IF NOT EXISTS upper_circuit NUMERIC(18, 6);

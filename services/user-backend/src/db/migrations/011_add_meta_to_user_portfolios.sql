@@ -1,0 +1,3 @@
+ALTER TABLE user_portfolios
+  ADD COLUMN IF NOT EXISTS meta JSONB NOT NULL DEFAULT '{}'::jsonb;
+

@@ -20,6 +20,49 @@ exports.getActiveStocksList = async (req, res) => {
   }
 };
 
+exports.getWatchlistSnapshot = async (req, res) => {
+  try {
+    const asOfDate = req.body?.as_of_date || getAsOfDateFromRequest(req) || null;
+    const masterIds = Array.isArray(req.body?.master_ids) ? req.body.master_ids : [];
+    const result = await activeStockService.getActiveStocksSnapshotByMasterIds(masterIds, {
+      asOfDate,
+    });
+
+    return response(res, 200, "Watchlist snapshot fetched successfully", {
+      as_of_date: asOfDate,
+      count: result.length,
+      rows: result,
+    });
+  } catch (error) {
+    return response(res, 500, constantsUtils.SERVER_ERROR, {
+      message: error.message,
+    });
+  }
+};
+
+exports.getBacktestAnalytics = async (req, res) => {
+  try {
+    const fromDate = req.body?.from_date || null;
+    const toDate = req.body?.to_date || getAsOfDateFromRequest(req) || null;
+    const masterIds = Array.isArray(req.body?.master_ids) ? req.body.master_ids : [];
+    const result = await activeStockService.getBacktestAnalyticsByMasterIds(masterIds, {
+      fromDate,
+      toDate,
+    });
+
+    return response(res, 200, "Backtest analytics fetched successfully", {
+      from_date: fromDate,
+      to_date: toDate,
+      count: result.length,
+      rows: result,
+    });
+  } catch (error) {
+    return response(res, 500, constantsUtils.SERVER_ERROR, {
+      message: error.message,
+    });
+  }
+};
+
 exports.getActiveStockByToken = async (req, res) => {
   try {
     const stock = await activeStockService.getActiveStockByToken(req.params.token);

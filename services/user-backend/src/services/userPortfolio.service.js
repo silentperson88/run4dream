@@ -9,6 +9,58 @@ const activeStockRepo = require("../repositories/activeStocks.repository");
 const portfolioTypeRepo = require("../repositories/portfolioTypes.repository");
 const { toNumber } = require("../repositories/common");
 
+const normalizeBacktestMeta = (meta = {}) => {
+  const enabledVersions = Array.isArray(meta.enabled_versions)
+    ? Array.from(
+        new Set(
+          meta.enabled_versions
+            .map((value) => String(value || "").trim().toUpperCase())
+            .filter((value) => ["PLUS", "PRO"].includes(value)),
+        ),
+      )
+    : [];
+
+  const watchlist = Array.isArray(meta.watchlist_master_ids)
+    ? Array.from(
+        new Set(
+          meta.watchlist_master_ids
+            .map((value) => Number(value))
+            .filter((value) => Number.isFinite(value) && value > 0),
+        ),
+      )
+    : [];
+
+  return {
+    mode: "BACKTEST",
+    as_of_date: meta.as_of_date || null,
+    query: typeof meta.query === "string" ? meta.query.trim() : "",
+    watchlist_master_ids: watchlist,
+    enabled_versions: enabledVersions,
+  };
+};
+
+const normalizePortfolioMeta = (type = null, meta = {}) => {
+  const baseMeta = meta && typeof meta === "object" ? meta : {};
+
+  if (String(type?.code || "").toUpperCase() === "BACKTESTING") {
+    return normalizeBacktestMeta(baseMeta);
+  }
+
+  const watchlist = Array.isArray(baseMeta.watchlist_master_ids)
+    ? Array.from(
+        new Set(
+          baseMeta.watchlist_master_ids
+            .map((value) => Number(value))
+            .filter((value) => Number.isFinite(value) && value > 0),
+        ),
+      )
+    : [];
+
+  return {
+    watchlist_master_ids: watchlist,
+  };
+};
+
 const attachPortfolioTypes = async (portfolios = []) => {
   if (!portfolios.length) return portfolios;
 
@@ -27,11 +79,17 @@ const attachPortfolioTypes = async (portfolios = []) => {
 
   return portfolios.map((p) => ({
     ...p,
-    portfolio_type_id: typeMap[String(p.portfolio_type_id)] || p.portfolio_type_id,
+    portfolio_type: typeMap[String(p.portfolio_type_id)] || null,
   }));
 };
 
-async function createUserPortfolio({ user_id, portfolio_type_id, name, initial_fund = 0 }) {
+async function createUserPortfolio({
+  user_id,
+  portfolio_type_id,
+  name,
+  initial_fund = 0,
+  meta = {},
+}) {
   return withTransaction(async (client) => {
     const exists = await portfolioRepo.findActiveByUserAndName(user_id, name, client);
     if (exists) {
@@ -46,6 +104,14 @@ async function createUserPortfolio({ user_id, portfolio_type_id, name, initial_f
     const type = await portfolioTypeRepo.getActiveById(portfolio_type_id, client);
     if (!type) {
       throw new Error(MESSAGES.PORTFOLIO.TYPE_NOT_FOUND);
+    }
+
+    const normalizedMeta = normalizePortfolioMeta(type, meta);
+    if (
+      String(type?.code || "").toUpperCase() === "BACKTESTING" &&
+      !normalizedMeta.as_of_date
+    ) {
+      throw new Error("Backtesting portfolio requires meta.as_of_date");
     }
 
     let user = null;
@@ -78,6 +144,7 @@ async function createUserPortfolio({ user_id, portfolio_type_id, name, initial_f
         name,
         initial_fund: fundToAllocate,
         available_fund: fundToAllocate,
+        meta: normalizedMeta,
       },
       client,
     );
@@ -102,11 +169,22 @@ async function createUserPortfolio({ user_id, portfolio_type_id, name, initial_f
 
 async function getUserPortfolios(user_id) {
   const portfolios = await portfolioRepo.listActiveByUser(user_id);
-  return attachPortfolioTypes(portfolios);
+  const withTypes = await attachPortfolioTypes(portfolios);
+  const priceBySymbol = await buildPriceMapForPortfolios(withTypes);
+
+  return withTypes.map((portfolio) => {
+    const totals = calcPortfolioTotals(portfolio, priceBySymbol);
+    return {
+      ...portfolio,
+      pnl: totals.current_value - totals.invested_value,
+    };
+  });
 }
 
 async function getUserPortfolioById({ user_id, portfolio_id }) {
-  return portfolioRepo.getActiveById(portfolio_id, user_id);
+  const portfolio = await portfolioRepo.getActiveById(portfolio_id, user_id);
+  if (!portfolio) return null;
+  return (await attachPortfolioTypes([portfolio]))[0];
 }
 
 async function getUserPortfolioWithOrders({ user_id, portfolio_id }) {
@@ -137,7 +215,7 @@ async function getHoldingsByActiveStock({ user_id, active_stock_id }) {
       return {
         portfolio_id: p.id,
         portfolio_name: p.name,
-        portfolio_type: p.portfolio_type_id,
+        portfolio_type: p.portfolio_type,
         holding,
       };
     })
@@ -153,8 +231,9 @@ async function getPortfolioHoldings({ user_id, portfolio_id }) {
   return {
     portfolio_id: withType.id,
     portfolio_name: withType.name,
-    portfolio_type: withType.portfolio_type_id,
+    portfolio_type: withType.portfolio_type,
     holdings: withType.holdings || [],
+    meta: withType.meta || {},
     available_fund: withType.available_fund,
     initial_fund: withType.initial_fund,
     status: withType.status,
@@ -176,7 +255,7 @@ async function getPortfolioHoldingOrders({ user_id, portfolio_id, active_stock_i
   return {
     portfolio_id: withType.id,
     portfolio_name: withType.name,
-    portfolio_type: withType.portfolio_type_id,
+    portfolio_type: withType.portfolio_type,
     active_stock_id,
     order_count: orders.length,
     orders,
@@ -320,6 +399,28 @@ async function archiveUserPortfolio({ user_id, portfolio_id }) {
   return true;
 }
 
+async function updateBacktestPortfolioMeta({ user_id, portfolio_id, meta = {} }) {
+  const portfolio = await portfolioRepo.getActiveById(portfolio_id, user_id);
+  if (!portfolio) {
+    throw new Error("Portfolio not found");
+  }
+
+  const type = await portfolioTypeRepo.getActiveById(portfolio.portfolio_type_id);
+  if (String(type?.code || "").toUpperCase() !== "BACKTESTING") {
+    throw new Error("Only backtesting portfolios support version settings");
+  }
+
+  const mergedMeta = normalizePortfolioMeta(type, {
+    ...(portfolio.meta || {}),
+    ...(meta || {}),
+  });
+
+  return portfolioRepo.updateFinancialState(
+    portfolio_id,
+    { meta: mergedMeta },
+  );
+}
+
 async function updateAvailableFund({ portfolio_id, amount, session }) {
   const db = session?.client;
   const portfolio = await portfolioRepo.getActiveByIdAnyUser(portfolio_id, db, {
@@ -353,5 +454,6 @@ module.exports = {
   getAllPortfoliosSummary,
   getPortfolioSummary,
   archiveUserPortfolio,
+  updateBacktestPortfolioMeta,
   updateAvailableFund,
 };

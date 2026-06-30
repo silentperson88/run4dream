@@ -6,6 +6,9 @@ const activeStockController = require("../controllers/activeStock.controller");
 // Get all active stocks
 router.get("/", activeStockController.getActiveStocksList);
 
+router.post("/watchlist-snapshot", activeStockController.getWatchlistSnapshot);
+router.post("/backtest-analytics", activeStockController.getBacktestAnalytics);
+
 // Get single active stock by token
 router.get("/:token", activeStockController.getActiveStockByToken);
 

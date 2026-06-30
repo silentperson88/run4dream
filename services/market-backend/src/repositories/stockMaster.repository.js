@@ -192,6 +192,130 @@ const listActive = async (db = pool) => {
   return rows.map(normalizeMaster);
 };
 
+const listEligibleForEodSearch = async (masterIds = null, db = pool) => {
+  const values = [];
+  const where = [
+    `is_active = TRUE`,
+    `UPPER(COALESCE(screener_status, '')) = 'VALID'`,
+    `UPPER(COALESCE(eod_history_status, '')) = 'HAS_EOD_DATA'`,
+  ];
+
+  if (Array.isArray(masterIds) && masterIds.length) {
+    const ids = Array.from(new Set(masterIds.map(Number).filter((n) => Number.isFinite(n) && n > 0)));
+    if (!ids.length) return [];
+    values.push(ids);
+    where.push(`id = ANY($${values.length}::bigint[])`);
+  }
+
+  const { rows } = await db.query(
+    `
+      SELECT id, symbol, name, exchange
+      FROM stock_master
+      WHERE ${where.join(" AND ")}
+      ORDER BY id ASC
+    `,
+    values,
+  );
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    symbol: row.symbol || null,
+    name: row.name || null,
+    exchange: row.exchange || null,
+  }));
+};
+
+const listEligibleForDailyFullEod = async (masterIds = null, db = pool) => {
+  const values = [];
+  const where = [
+    `is_active = TRUE`,
+    `LOWER(COALESCE(angelone_fetch_status, '')) = 'fetched'`,
+    `UPPER(COALESCE(eod_history_status, '')) = 'HAS_EOD_DATA'`,
+    `UPPER(COALESCE(screener_status, '')) = 'VALID'`,
+    `NULLIF(BTRIM(COALESCE(token, '')), '') IS NOT NULL`,
+    `NULLIF(BTRIM(COALESCE(symbol, '')), '') IS NOT NULL`,
+  ];
+
+  if (Array.isArray(masterIds) && masterIds.length) {
+    const ids = Array.from(new Set(masterIds.map(Number).filter((n) => Number.isFinite(n) && n > 0)));
+    if (!ids.length) return [];
+    values.push(ids);
+    where.push(`id = ANY($${values.length}::bigint[])`);
+  }
+
+  const { rows } = await db.query(
+    `
+      SELECT id, symbol, name, exchange, token
+      FROM stock_master
+      WHERE ${where.join(" AND ")}
+      ORDER BY id ASC
+    `,
+    values,
+  );
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    symbol: row.symbol || null,
+    name: row.name || null,
+    exchange: row.exchange || null,
+    token: row.token || null,
+  }));
+};
+
+const listEligibleHistoricalUniversePassed = async (db = pool) => {
+  const { rows } = await db.query(
+    `
+      SELECT id, symbol, name, exchange
+      FROM stock_master
+      WHERE historical_universe_passed = TRUE
+      ORDER BY id ASC
+    `
+  );
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    symbol: row.symbol || null,
+    name: row.name || null,
+    exchange: row.exchange || null,
+  }));
+};
+
+const bulkUpdateHistoricalUniverseState = async (rows = [], db = pool) => {
+  if (!Array.isArray(rows) || !rows.length) return 0;
+
+  const payload = rows
+    .map((row) => ({
+      id: Number(row?.id ?? row?.master_id),
+      historical_universe_passed: row?.historical_universe_passed === null || row?.historical_universe_passed === undefined
+        ? null
+        : Boolean(row.historical_universe_passed),
+    }))
+    .filter((row) => Number.isFinite(row.id) && row.id > 0 && row.historical_universe_passed !== null);
+
+  if (!payload.length) return 0;
+
+  const { rowCount } = await db.query(
+    `
+      WITH staged AS (
+        SELECT *
+        FROM jsonb_to_recordset($1::jsonb) AS x(
+          id BIGINT,
+          historical_universe_passed BOOLEAN
+        )
+      )
+      UPDATE stock_master AS target
+      SET
+        historical_universe_passed = staged.historical_universe_passed,
+        updated_at = NOW()
+      FROM staged
+      WHERE target.id = staged.id
+    `,
+    [JSON.stringify(payload)],
+  );
+
+  return rowCount || 0;
+};
+
 const list = async ({ page = 1, limit = 50, search = "", is_active = true } = {}, db = pool) => {
   const offset = (Number(page) - 1) * Number(limit);
   const where = [];
@@ -234,6 +358,73 @@ const list = async ({ page = 1, limit = 50, search = "", is_active = true } = {}
     page: Number(page),
     limit: Number(limit),
   };
+};
+
+const listEligibleMasterIdsForDerivedMetrics = async (
+  {
+    afterMasterId = 0,
+    fromId = null,
+    toId = null,
+    limit = 25,
+    shardCount = 1,
+    shardIndex = 0,
+    masterId = null,
+  } = {},
+  db = pool,
+) => {
+  if (masterId !== null && masterId !== undefined && masterId !== "") {
+    const numericMasterId = Number(masterId);
+    return Number.isFinite(numericMasterId) && numericMasterId > 0 ? [numericMasterId] : [];
+  }
+
+  const safeAfterMasterId = Number(afterMasterId) || 0;
+  const safeFromId = Number(fromId) || 0;
+  const safeToId = Number(toId) || 0;
+  const safeShardCount = Math.max(1, Number(shardCount) || 1);
+  const safeShardIndex = Math.max(0, Number(shardIndex) || 0);
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 25));
+
+  const values = [safeAfterMasterId];
+  const where = ["id > $1"];
+
+  if (safeFromId > 0) {
+    values.push(safeFromId);
+    where.push(`id >= $${values.length}`);
+  }
+
+  if (safeToId > 0) {
+    values.push(safeToId);
+    where.push(`id <= $${values.length}`);
+  }
+
+  values.push("HAS_EOD_DATA");
+  where.push(`COALESCE(UPPER(eod_history_status), '') = $${values.length}`);
+
+  values.push(true);
+  where.push(`is_active = $${values.length}`);
+
+  values.push(safeShardCount);
+  const shardCountIdx = values.length;
+  values.push(safeShardIndex);
+  const shardIndexIdx = values.length;
+  values.push(safeLimit);
+  const limitIdx = values.length;
+
+  const { rows } = await db.query(
+    `
+      SELECT id AS master_id
+      FROM stock_master
+      WHERE ${where.join(" AND ")}
+        AND MOD(id, $${shardCountIdx}::bigint) = $${shardIndexIdx}::bigint
+      ORDER BY id ASC
+      LIMIT $${limitIdx}
+    `,
+    values,
+  );
+
+  return rows
+    .map((row) => Number(row.master_id))
+    .filter((value) => Number.isFinite(value) && value > 0);
 };
 
 const updateHistoryCoverage = async (
@@ -290,6 +481,11 @@ module.exports = {
   getBySymbolOrName,
   getByName,
   listActive,
+  listEligibleForEodSearch,
+  listEligibleForDailyFullEod,
+  listEligibleHistoricalUniversePassed,
+  bulkUpdateHistoricalUniverseState,
   list,
+  listEligibleMasterIdsForDerivedMetrics,
   updateHistoryCoverage,
 };

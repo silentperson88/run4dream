@@ -1,8 +1,9 @@
 require("../src/config/env");
-const { pool } = require("../src/config/db");
+const { pool, dbReady } = require("../src/config/db");
 const seedPortfolioTypes = require("./portfolioType.seed");
 
 async function run() {
+  await dbReady;
   const client = await pool.connect();
 
   try {

@@ -1,7 +1,9 @@
 const {
   fetchEodByMasterIdRange,
+  fetchEodByMasterIdRangePreview,
   fetchEodByMasterIdRangeChunked,
   getEodByMasterIdRangeFromDb,
+  syncDailyEodFromFullMode,
 } = require("../services/stockOhlcEod.service");
 const masterService = require("../services/stockMaster.service");
 const { getAsOfDateFromRequest } = require("../utils/asOfDate.utils");
@@ -70,6 +72,52 @@ async function fetchEodByRange(req, res) {
   } catch (err) {
     console.error("EOD Range Fetch Error:", err);
     res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+}
+
+let fullModeDailySyncState = {
+  running: false,
+  startedAt: null,
+  lastResult: null,
+  lastError: null,
+};
+
+async function fetchEodByRangePreview(req, res) {
+  try {
+    console.log("fetchEodByRangePreview");
+    const { master_id, fromDate, toDate } = req.body;
+
+    const master = await masterService.getMasterStockById(master_id);
+    if (!master) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid master_id",
+      });
+    }
+
+    const result = await fetchEodByMasterIdRangePreview({
+      master_id,
+      symboltoken: master.token,
+      symbol: master.symbol,
+      fromDate,
+      toDate,
+      exchange: master.exchange,
+    });
+
+    return res.json({
+      success: true,
+      count: result.candles.length,
+      source: "smartapi",
+      stored_in_db: false,
+      data: result.candles,
+      raw_data: result.rawCandles,
+    });
+  } catch (err) {
+    console.error("EOD Range Preview Fetch Error:", err);
+    return res.status(500).json({
       success: false,
       message: err.message,
     });
@@ -154,8 +202,92 @@ async function getEodFromDbByRange(req, res) {
   }
 }
 
+async function syncDailyEodFromFull(req, res) {
+  try {
+    const masterId = req.body?.master_id ? Number(req.body.master_id) : null;
+    const result = await syncDailyEodFromFullMode({ masterId });
+
+    return res.json({
+      success: true,
+      message: "Daily EOD synced from SmartAPI FULL mode",
+      data: result,
+    });
+  } catch (err) {
+    console.error("Sync Daily EOD From FULL Error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+}
+
+async function triggerDailyEodFromFull(req, res) {
+  try {
+    const masterId = req.body?.master_id ? Number(req.body.master_id) : null;
+
+    if (fullModeDailySyncState.running) {
+      return res.status(202).json({
+        success: true,
+        message: "Daily EOD FULL sync is already running",
+        data: {
+          running: true,
+          startedAt: fullModeDailySyncState.startedAt,
+          lastResult: fullModeDailySyncState.lastResult,
+          lastError: fullModeDailySyncState.lastError,
+        },
+      });
+    }
+
+    fullModeDailySyncState = {
+      ...fullModeDailySyncState,
+      running: true,
+      startedAt: new Date().toISOString(),
+      lastError: null,
+    };
+
+    setImmediate(async () => {
+      try {
+        const result = await syncDailyEodFromFullMode({ masterId });
+        fullModeDailySyncState = {
+          running: false,
+          startedAt: null,
+          lastResult: result,
+          lastError: null,
+        };
+      } catch (error) {
+        fullModeDailySyncState = {
+          running: false,
+          startedAt: null,
+          lastResult: null,
+          lastError: error?.message || "Unknown FULL sync error",
+        };
+        console.error("Background Daily EOD FULL sync error:", error);
+      }
+    });
+
+    return res.status(202).json({
+      success: true,
+      message: "Daily EOD FULL sync started successfully",
+      data: {
+        running: true,
+        startedAt: fullModeDailySyncState.startedAt,
+        master_id: masterId || null,
+      },
+    });
+  } catch (err) {
+    console.error("Trigger Daily EOD From FULL Error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+}
+
 module.exports = {
   fetchEodByRange,
+  fetchEodByRangePreview,
   fetchEodByRangeChunked,
   getEodFromDbByRange,
+  syncDailyEodFromFull,
+  triggerDailyEodFromFull,
 };

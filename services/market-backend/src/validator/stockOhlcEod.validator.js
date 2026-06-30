@@ -62,3 +62,10 @@ exports.getEodFromDbValidationRule = [
     .isInt({ min: 1, max: 20000 })
     .withMessage("limit must be between 1 and 20000"),
 ];
+
+exports.syncDailyEodFromFullValidationRule = [
+  body("master_id")
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage("master_id must be a valid id"),
+];

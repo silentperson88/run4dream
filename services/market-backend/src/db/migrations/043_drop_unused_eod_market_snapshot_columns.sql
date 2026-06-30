@@ -1,0 +1,3 @@
+ALTER TABLE eod
+  DROP COLUMN IF EXISTS percent_change,
+  DROP COLUMN IF EXISTS avg_price;

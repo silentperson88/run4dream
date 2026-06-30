@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const controller = require("../controllers/newsCreator.controller");
+const { geminiChat, geminiGroundedAnswer } = require("../controllers/geminiChat.controller");
+const { googleAiScrapeAnswer } = require("../controllers/googleAiScrape.controller");
 const validate = require("../middlewares/validateRequest.middleware");
 const { authMiddleware } = require("../middlewares/auth.middleware");
 const {
@@ -13,6 +15,21 @@ const {
   uploadSceneImageValidator,
   createVideoRenderValidator,
 } = require("../validator/newsCreator.validator");
+
+router.post(
+  "/gemini-chat",
+  geminiChat,
+);
+
+router.post(
+  "/gemini-grounded-answer",
+  geminiGroundedAnswer,
+);
+
+router.post(
+  "/google-ai-scrape-answer",
+  googleAiScrapeAnswer,
+);
 
 router.post(
   "/generate-script",

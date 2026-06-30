@@ -9,6 +9,8 @@ const mountRoutes = (app, prefix = "") => {
   app.use(`${prefix}/news-content`, require("./musicLibrary.routes"));
   app.use(`${prefix}/news-content`, require("./socialAccounts.routes"));
   app.use(`${prefix}/news-content`, require("./socialPublish.routes"));
+  app.use(`${prefix}/news-content`, require("./geminiChat.routes"));
+  app.use(`${prefix}/news-content`, require("./googleAiScrape.routes"));
   app.use(`${prefix}/news-content/new-approach`, require("./newsApproach.routes"));
   app.use(`${prefix}/news-content/bse`, require("./newsIngest.routes"));
   app.use(`${prefix}/tts`, require("./tts.routes"));
